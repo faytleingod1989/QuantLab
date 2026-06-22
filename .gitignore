@@ -1,0 +1,10 @@
+frontend/node_modules/
+frontend/dist/
+frontend/.npm-cache/
+.playwright-cli/
+output/playwright/
+__pycache__/
+.pytest_cache/
+*.pyc
+data/quantlab.db*
+data/datasets/*.csv
