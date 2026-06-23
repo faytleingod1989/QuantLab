@@ -214,7 +214,7 @@ def test_limit_rates_cover_st_star_chinext_and_bj():
         pd.DataFrame(
             {
                 "trade_date": ["2024-01-03"] * 4,
-                "symbol": ["600000.SH", "688001.SH", "300001.SZ", "830000.BJ"],
+                "symbol": ["600000.SH", "688001.SH", "300001.SZ", "920000.BJ"],
                 "name": ["ST浦发", "科创测试", "创业测试", "北交测试"],
                 "open": [10, 10, 10, 10],
                 "high": [10.5, 12, 12, 13],
@@ -229,7 +229,7 @@ def test_limit_rates_cover_st_star_chinext_and_bj():
     assert limits["600000.SH"] == 10.5
     assert limits["688001.SH"] == 12.0
     assert limits["300001.SZ"] == 12.0
-    assert limits["830000.BJ"] == 13.0
+    assert limits["920000.BJ"] == 13.0
 
 
 def test_csv_calendar_filter_removes_non_trading_days_with_calendar_client():

@@ -387,14 +387,29 @@ class BacktestRepository:
                     exchange = excluded.exchange,
                     board = excluded.board,
                     listed_date = CASE
+                        WHEN securities.source = 'akshare_master'
+                             AND excluded.source IN ('seed', 'demo')
+                        THEN securities.listed_date
                         WHEN excluded.source = 'akshare_master' THEN excluded.listed_date
-                        WHEN securities.source = 'seed' AND excluded.source != 'seed' THEN excluded.listed_date
+                        WHEN securities.source IN ('seed', 'demo')
+                             AND excluded.source NOT IN ('seed', 'demo')
+                        THEN excluded.listed_date
                         ELSE MIN(securities.listed_date, excluded.listed_date)
                     END,
                     delisted_date = COALESCE(excluded.delisted_date, securities.delisted_date),
-                    status = excluded.status,
+                    status = CASE
+                        WHEN securities.source = 'akshare_master'
+                             AND excluded.source IN ('seed', 'demo')
+                        THEN securities.status
+                        ELSE excluded.status
+                    END,
                     source = CASE
-                        WHEN excluded.source = 'akshare_master' OR securities.source = 'seed'
+                        WHEN excluded.source = 'akshare_master'
+                        THEN excluded.source
+                        WHEN securities.source = 'akshare_master'
+                             AND excluded.source IN ('seed', 'demo')
+                        THEN securities.source
+                        WHEN securities.source IN ('seed', 'demo')
                         THEN excluded.source
                         ELSE securities.source
                     END,

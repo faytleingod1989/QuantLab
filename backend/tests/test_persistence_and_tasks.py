@@ -134,6 +134,44 @@ def test_real_security_master_overrides_demo_seed_listing_date(tmp_path):
     assert security["source"] == "akshare_master"
 
 
+def test_demo_seed_does_not_regress_akshare_master_listing_date(tmp_path):
+    repository = BacktestRepository(tmp_path / "quantlab.db")
+    repository.upsert_securities(
+        [
+            {
+                "symbol": "600519.SH",
+                "name": "贵州茅台",
+                "exchange": "SH",
+                "board": "沪市主板",
+                "listed_date": "2001-08-27",
+                "delisted_date": None,
+                "status": "active",
+                "industry": "C 制造业",
+                "total_share": 1_000_000,
+                "float_share": 900_000,
+                "source": "akshare_master",
+            }
+        ]
+    )
+    repository.upsert_securities(
+        [
+            {
+                "symbol": "600519.SH",
+                "name": "贵州茅台",
+                "exchange": "SH",
+                "board": "沪市主板",
+                "listed_date": "1990-12-19",
+                "delisted_date": None,
+                "status": "active",
+                "source": "demo",
+            }
+        ]
+    )
+    security = repository.get_security("600519.SH")
+    assert security["listed_date"] == "2001-08-27"
+    assert security["source"] == "akshare_master"
+
+
 def test_repository_persists_dataset_quality_checks(tmp_path):
     repository = BacktestRepository(tmp_path / "quantlab.db")
     repository.replace_dataset_quality_checks(

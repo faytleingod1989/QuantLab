@@ -42,10 +42,10 @@ def _stable_seed(symbol: str) -> int:
 
 
 def _limit_rate(symbol: str, trade_date: pd.Timestamp, name: str) -> float:
-    code = symbol.split(".")[0]
+    code, exchange = symbol.split(".")
     if "ST" in name.upper():
         return 0.05
-    if code.startswith("8"):
+    if exchange == "BJ" or code.startswith("8"):
         return 0.30
     if code.startswith(("688", "689")):
         return 0.20
