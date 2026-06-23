@@ -9,6 +9,20 @@ def test_paginate_trades_clamps_limit_and_offset():
     assert paginate_trades(result, limit=999, offset=-1)["limit"] == 500
 
 
+def test_paginate_trades_filters_by_side():
+    result = {
+        "trades": [
+            {"id": 1, "side": "买入"},
+            {"id": 2, "side": "卖出"},
+            {"id": 3, "side": "买入"},
+        ]
+    }
+    page = paginate_trades(result, limit=10, side="买入")
+    assert page["side"] == "买入"
+    assert page["total"] == 2
+    assert [item["id"] for item in page["items"]] == [1, 3]
+
+
 def test_render_markdown_report_contains_metrics_quality_and_trades():
     report = render_markdown_report(
         {

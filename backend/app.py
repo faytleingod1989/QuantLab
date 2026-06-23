@@ -270,13 +270,13 @@ def get_backtest_result(run_id: str) -> dict:
 
 
 @app.get("/api/backtests/{run_id}/trades")
-def get_backtest_trades(run_id: str, limit: int = 50, offset: int = 0) -> dict:
+def get_backtest_trades(run_id: str, limit: int = 50, offset: int = 0, side: str | None = None) -> dict:
     record = repository.get_run(run_id, include_result=True)
     if not record:
         raise HTTPException(status_code=404, detail="回测任务不存在")
     if record["status"] != "completed":
         raise HTTPException(status_code=409, detail=f"任务尚未完成，当前状态: {record['status']}")
-    return paginate_trades(record["result"], limit=limit, offset=offset)
+    return paginate_trades(record["result"], limit=limit, offset=offset, side=side)
 
 
 @app.get("/api/backtests/{run_id}/report.md")

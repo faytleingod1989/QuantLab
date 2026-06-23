@@ -1,3 +1,4 @@
+import { useEffect, useMemo, useState } from "react";
 import {
   Area,
   AreaChart,
@@ -10,8 +11,11 @@ import {
   YAxis,
 } from "recharts";
 
+import { API } from "../appConfig";
 import { formatMoney, formatPercent } from "../formatters";
 import { ChartTooltip } from "./common";
+
+const TRADE_PAGE_SIZE = 10;
 
 function EquityChart({ chartData, result, settings }) {
   return (
@@ -71,15 +75,75 @@ function MonthlyHeatmap({ years }) {
   );
 }
 
-function TradesTable({ result }) {
+function TradesTable({ result, taskId }) {
+  const [side, setSide] = useState("all");
+  const [offset, setOffset] = useState(0);
+  const [page, setPage] = useState(() => ({
+    total: result?.trades?.length || 0,
+    items: (result?.trades || []).slice(0, TRADE_PAGE_SIZE),
+  }));
+  const [loading, setLoading] = useState(false);
+
+  useEffect(() => setOffset(0), [taskId, side]);
+
+  useEffect(() => {
+    const fallback = result?.trades || [];
+    if (!taskId) {
+      const filtered = side === "all" ? fallback : fallback.filter((trade) => trade.side === side);
+      setPage({
+        total: filtered.length,
+        items: filtered.slice(offset, offset + TRADE_PAGE_SIZE),
+      });
+      return;
+    }
+
+    const controller = new AbortController();
+    setLoading(true);
+    const params = new URLSearchParams({
+      limit: String(TRADE_PAGE_SIZE),
+      offset: String(offset),
+    });
+    if (side !== "all") params.set("side", side);
+    fetch(`${API}/backtests/${taskId}/trades?${params.toString()}`, { signal: controller.signal })
+      .then((response) => {
+        if (!response.ok) throw new Error("无法读取交易分页");
+        return response.json();
+      })
+      .then(setPage)
+      .catch((error) => {
+        if (error.name !== "AbortError") {
+          const filtered = side === "all" ? fallback : fallback.filter((trade) => trade.side === side);
+          setPage({
+            total: filtered.length,
+            items: filtered.slice(offset, offset + TRADE_PAGE_SIZE),
+          });
+        }
+      })
+      .finally(() => setLoading(false));
+    return () => controller.abort();
+  }, [offset, result, side, taskId]);
+
+  const currentPage = Math.floor(offset / TRADE_PAGE_SIZE) + 1;
+  const totalPages = Math.max(1, Math.ceil((page.total || 0) / TRADE_PAGE_SIZE));
+
   return (
     <div className="chart-panel trades-panel">
-      <div className="panel-head"><b>交易记录（最近 10 笔）</b><button className="text-button">查看全部 ›</button></div>
+      <div className="panel-head">
+        <b>交易记录</b>
+        <div className="trade-controls">
+          <select value={side} onChange={(event) => setSide(event.target.value)}>
+            <option value="all">全部方向</option>
+            <option value="买入">仅买入</option>
+            <option value="卖出">仅卖出</option>
+          </select>
+          <span>{loading ? "加载中…" : `${page.total || 0} 笔`}</span>
+        </div>
+      </div>
       <div className="table-wrap">
         <table>
           <thead><tr><th>交易日期</th><th>代码</th><th>名称</th><th>方向</th><th>成交价</th><th>数量</th><th>收益</th></tr></thead>
           <tbody>
-            {(result?.trades || []).slice(0, 10).map((trade, index) => (
+            {(page.items || []).map((trade, index) => (
               <tr key={`${trade.date}-${trade.symbol}-${index}`}>
                 <td>{trade.date}</td>
                 <td>{trade.symbol}</td>
@@ -90,21 +154,51 @@ function TradesTable({ result }) {
                 <td className={(trade.pnl || 0) >= 0 ? "positive" : "negative"}>{trade.pnl == null ? "—" : formatMoney(trade.pnl)}</td>
               </tr>
             ))}
+            {!(page.items || []).length ? (
+              <tr><td colSpan="7" className="empty-cell">暂无交易记录</td></tr>
+            ) : null}
           </tbody>
         </table>
+      </div>
+      <div className="pager">
+        <button className="text-button" disabled={offset <= 0} onClick={() => setOffset(Math.max(0, offset - TRADE_PAGE_SIZE))}>上一页</button>
+        <span>{currentPage} / {totalPages}</span>
+        <button className="text-button" disabled={offset + TRADE_PAGE_SIZE >= (page.total || 0)} onClick={() => setOffset(offset + TRADE_PAGE_SIZE)}>下一页</button>
       </div>
     </div>
   );
 }
 
-export default function DashboardCharts({ chartData, result, settings, metrics, years }) {
+function OrderEventsSummary({ events }) {
+  const stats = useMemo(() => {
+    const counts = {};
+    for (const event of events || []) {
+      counts[event.reason || "其他"] = (counts[event.reason || "其他"] || 0) + 1;
+    }
+    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  }, [events]);
+
+  return (
+    <div className="event-summary">
+      <b>订单拒绝统计</b>
+      {stats.length ? stats.slice(0, 4).map(([reason, count]) => (
+        <span key={reason}>{reason} <em>{count}</em></span>
+      )) : <span>暂无拒单</span>}
+    </div>
+  );
+}
+
+export default function DashboardCharts({ chartData, result, settings, metrics, years, taskId }) {
   return (
     <>
       <EquityChart chartData={chartData} result={result} settings={settings} />
       <DrawdownChart chartData={chartData} metrics={metrics} />
       <section className="lower-grid">
         <MonthlyHeatmap years={years} />
-        <TradesTable result={result} />
+        <div className="trade-stack">
+          <OrderEventsSummary events={result?.order_events} />
+          <TradesTable result={result} taskId={taskId} />
+        </div>
       </section>
     </>
   );

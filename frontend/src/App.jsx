@@ -325,7 +325,7 @@ function App() {
         {running ? <LoadingBanner message={`回测运行中，进度 ${Math.round(progress * 100)}%`} /> : null}
         <MetricsStrip metrics={metrics} />
         <Suspense fallback={<ChartLoading />}>
-          <DashboardCharts chartData={chartData} result={result} settings={settings} metrics={metrics} years={years} />
+          <DashboardCharts chartData={chartData} result={result} settings={settings} metrics={metrics} years={years} taskId={result?.task_id} />
         </Suspense>
         <DashboardFooter settings={settings} source={source} />
       </main>

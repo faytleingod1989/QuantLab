@@ -3,14 +3,22 @@ from __future__ import annotations
 from typing import Any
 
 
-def paginate_trades(result: dict[str, Any], limit: int = 50, offset: int = 0) -> dict[str, Any]:
+def paginate_trades(
+    result: dict[str, Any],
+    limit: int = 50,
+    offset: int = 0,
+    side: str | None = None,
+) -> dict[str, Any]:
     trades = list(result.get("trades") or [])
+    if side in {"买入", "卖出"}:
+        trades = [trade for trade in trades if trade.get("side") == side]
     safe_limit = max(1, min(int(limit), 500))
     safe_offset = max(0, int(offset))
     return {
         "total": len(trades),
         "limit": safe_limit,
         "offset": safe_offset,
+        "side": side if side in {"买入", "卖出"} else "all",
         "items": trades[safe_offset : safe_offset + safe_limit],
     }
 
