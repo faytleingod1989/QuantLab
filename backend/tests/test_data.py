@@ -264,6 +264,34 @@ def test_ipo_limit_exemptions_are_versioned_by_board_and_listing_date():
     assert not bool(star.iloc[5]["limit_exempt"])
 
 
+def test_pre_registration_main_board_ipo_first_day_uses_special_limit_bounds():
+    frame = prepare_market_frame(
+        pd.DataFrame(
+            {
+                "trade_date": ["2022-01-04", "2022-01-05"],
+                "symbol": ["600123.SH", "600123.SH"],
+                "name": ["主板新股", "主板新股"],
+                "listed_date": ["2022-01-04", "2022-01-04"],
+                "open": [10, 14.4],
+                "high": [14.4, 15.0],
+                "low": [6.4, 13.0],
+                "close": [14.4, 14.0],
+                "prev_close": [10, 14.4],
+                "volume": [1000, 1000],
+            }
+        )
+    )
+    first_day = frame.iloc[0]
+    second_day = frame.iloc[1]
+    assert not bool(first_day["limit_exempt"])
+    assert first_day["limit_reason"] == "沪深主板注册制前新股上市首日适用44%/-36%特殊价格限制"
+    assert first_day["limit_rate"] == 0.44
+    assert first_day["limit_up"] == 14.4
+    assert first_day["limit_down"] == 6.4
+    assert second_day["limit_rate"] == 0.10
+    assert second_day["limit_up"] == 15.84
+
+
 def test_csv_calendar_filter_removes_non_trading_days_with_calendar_client():
     frame = prepare_market_frame(
         pd.DataFrame(

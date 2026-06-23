@@ -55,6 +55,21 @@ def _limit_rate(symbol: str, trade_date: pd.Timestamp, name: str) -> float:
     return 0.10
 
 
+def _is_old_main_board_ipo_first_session(
+    symbol: str,
+    listed_date: pd.Timestamp | None,
+    listing_session: int | None,
+) -> bool:
+    if listed_date is None or pd.isna(listed_date) or listing_session != 1:
+        return False
+    code, exchange = symbol.split(".")
+    return (
+        exchange in {"SH", "SZ"}
+        and not code.startswith(("300", "301", "688", "689"))
+        and listed_date < MAIN_BOARD_REGISTRATION_START
+    )
+
+
 def _is_limit_exempt(
     symbol: str,
     trade_date: pd.Timestamp,
@@ -81,6 +96,8 @@ def _is_limit_exempt(
         and listing_session <= 5
     ):
         return True, "沪深主板注册制新股上市后前5个交易日不设价格涨跌幅限制"
+    if _is_old_main_board_ipo_first_session(symbol, listed_date, listing_session):
+        return False, "沪深主板注册制前新股上市首日适用44%/-36%特殊价格限制"
     return False, ""
 
 
@@ -180,7 +197,6 @@ def prepare_market_frame(frame: pd.DataFrame) -> pd.DataFrame:
             current["symbol"], current["trade_date"], current["name"], strict=True
         )
     ]
-    current["limit_rate"] = pd.Series(rates, index=current.index)
     listing_sessions = pd.Series(index=current.index, dtype="float")
     for _, group in current.groupby("symbol", sort=False):
         listed_date = group["listed_date"].dropna().min()
@@ -205,10 +221,23 @@ def prepare_market_frame(frame: pd.DataFrame) -> pd.DataFrame:
     ]
     current["limit_exempt"] = [item[0] for item in exemptions]
     current["limit_reason"] = [item[1] for item in exemptions]
+    old_main_board_first_day = [
+        _is_old_main_board_ipo_first_session(
+            symbol,
+            listed_date if pd.notna(listed_date) else None,
+            int(session) if pd.notna(session) else None,
+        )
+        for symbol, listed_date, session in zip(
+            current["symbol"], current["listed_date"], listing_sessions, strict=True
+        )
+    ]
+    up_rates = [0.44 if special else rate for rate, special in zip(rates, old_main_board_first_day, strict=True)]
+    down_rates = [0.36 if special else rate for rate, special in zip(rates, old_main_board_first_day, strict=True)]
+    current["limit_rate"] = pd.Series(up_rates, index=current.index)
     if "limit_up" not in current:
-        current["limit_up"] = current["prev_close"] * (1 + pd.Series(rates, index=current.index))
+        current["limit_up"] = current["prev_close"] * (1 + pd.Series(up_rates, index=current.index))
     if "limit_down" not in current:
-        current["limit_down"] = current["prev_close"] * (1 - pd.Series(rates, index=current.index))
+        current["limit_down"] = current["prev_close"] * (1 - pd.Series(down_rates, index=current.index))
     current["limit_up"] = pd.to_numeric(current["limit_up"], errors="coerce").round(2)
     current["limit_down"] = pd.to_numeric(current["limit_down"], errors="coerce").round(2)
     if "suspended" not in current:
