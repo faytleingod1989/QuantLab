@@ -27,6 +27,7 @@ from .data import (
     load_csv_text,
     load_dataset_view,
     normalize_symbol,
+    prepare_market_frame,
     sample_daily,
     source_status,
 )
@@ -281,7 +282,25 @@ def list_datasets() -> list[dict]:
     return repository.list_datasets()
 
 
+def _enrich_frame_with_security_master(frame) -> object:
+    current = frame.copy()
+    current["symbol"] = current["symbol"].map(normalize_symbol)
+    securities = {
+        item["symbol"]: item
+        for item in repository.list_securities(include_inactive=True)
+    }
+    listed_dates = current["symbol"].map(
+        lambda symbol: securities.get(symbol, {}).get("listed_date")
+    )
+    if "listed_date" in current:
+        current["listed_date"] = current["listed_date"].fillna(listed_dates)
+    else:
+        current["listed_date"] = listed_dates
+    return prepare_market_frame(current)
+
+
 def _persist_dataset(name: str, frame, source: str) -> dict:
+    frame = _enrich_frame_with_security_master(frame)
     normalized = frame.to_csv(index=False, date_format="%Y-%m-%d").encode("utf-8")
     fingerprint = hashlib.sha256(normalized).hexdigest()
     summary = dataset_summary(frame)

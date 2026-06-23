@@ -144,6 +144,18 @@ class BacktestRepository:
                 ON security_daily_status(symbol, trade_date)
                 """
             )
+            self._ensure_column(
+                connection,
+                "security_daily_status",
+                "limit_exempt",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            self._ensure_column(
+                connection,
+                "security_daily_status",
+                "limit_reason",
+                "TEXT NOT NULL DEFAULT ''",
+            )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS dataset_quality_checks (
@@ -448,8 +460,8 @@ class BacktestRepository:
                 """
                 INSERT OR REPLACE INTO security_daily_status(
                     dataset_id, symbol, trade_date, name, is_st, suspended,
-                    limit_up, limit_down, source
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    limit_exempt, limit_reason, limit_up, limit_down, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -459,6 +471,8 @@ class BacktestRepository:
                         record["name"],
                         int(bool(record.get("is_st", False))),
                         int(bool(record.get("suspended", False))),
+                        int(bool(record.get("limit_exempt", False))),
+                        record.get("limit_reason", ""),
                         float(record["limit_up"]),
                         float(record["limit_down"]),
                         record.get("source", "csv"),
@@ -513,6 +527,7 @@ class BacktestRepository:
                 **dict(row),
                 "is_st": bool(row["is_st"]),
                 "suspended": bool(row["suspended"]),
+                "limit_exempt": bool(row["limit_exempt"]),
             }
             for row in rows
         ]

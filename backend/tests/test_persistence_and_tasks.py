@@ -92,7 +92,7 @@ def test_repository_persists_security_master_and_daily_status(tmp_path):
     assert security["listed_date"] == "2024-01-02"
     status = repository.list_security_daily_status("600519.SH", "2024-01-02", "2024-01-05")
     assert len(status) == len(frame)
-    assert {"is_st", "suspended", "limit_up", "limit_down"} <= set(status[0])
+    assert {"is_st", "suspended", "limit_exempt", "limit_reason", "limit_up", "limit_down"} <= set(status[0])
 
 
 def test_real_security_master_overrides_demo_seed_listing_date(tmp_path):

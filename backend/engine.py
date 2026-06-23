@@ -172,7 +172,7 @@ def run_backtest(
             position = positions[symbol]
             if position.available <= 0 or bool(row.get("suspended", False)):
                 continue
-            if _at_or_below(row["open"], row.get("limit_down")):
+            if not bool(row.get("limit_exempt", False)) and _at_or_below(row["open"], row.get("limit_down")):
                 order_events.append({"date": str(date.date()), "symbol": symbol, "reason": "跌停未成交"})
                 continue
             price = _money(float(row["open"]) * (1 - request.slippage_rate))
@@ -201,7 +201,7 @@ def run_backtest(
             row = prepared[symbol].loc[date]
             if bool(row.get("suspended", False)):
                 continue
-            if _at_or_above(row["open"], row.get("limit_up")):
+            if not bool(row.get("limit_exempt", False)) and _at_or_above(row["open"], row.get("limit_up")):
                 order_events.append({"date": str(date.date()), "symbol": symbol, "reason": "涨停未成交"})
                 continue
             active_buys.append(symbol)

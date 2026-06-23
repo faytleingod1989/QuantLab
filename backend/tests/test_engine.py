@@ -101,6 +101,9 @@ def _cross_frame(symbol: str, *, blocked: str | None = None) -> pd.DataFrame:
     )
     if blocked == "limit_up":
         frame.loc[5, "limit_up"] = frame.loc[5, "open"]
+    if blocked == "limit_up_exempt":
+        frame.loc[5, "limit_up"] = frame.loc[5, "open"]
+        frame.loc[5, "limit_exempt"] = True
     if blocked == "limit_up_cent_rounding":
         frame.loc[5, "limit_up"] = frame.loc[5, "open"] + 0.004
     if blocked == "suspended":
@@ -139,6 +142,13 @@ def test_limit_up_comparison_rounds_prices_to_cents():
     )
     assert result["trades"] == []
     assert any(event["reason"] == "涨停未成交" for event in result["order_events"])
+
+
+def test_limit_exemption_allows_ipo_day_buy_even_at_limit_price():
+    request = _cross_request(["AAA.SH"])
+    result = run_backtest({"AAA.SH": _cross_frame("AAA.SH", blocked="limit_up_exempt")}, request)
+    assert any(trade["side"] == "买入" for trade in result["trades"])
+    assert not any(event["reason"] == "涨停未成交" for event in result["order_events"])
 
 
 def test_suspension_blocks_buy():

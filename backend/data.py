@@ -17,6 +17,7 @@ SAMPLE_NAMES = {
     "000858.SZ": "五粮液",
 }
 SYMBOL_PATTERN = re.compile(r"^(\d{6})\.(SH|SZ|BJ)$")
+MAIN_BOARD_REGISTRATION_START = pd.Timestamp("2023-04-10")
 
 
 class DataSourceError(RuntimeError):
@@ -52,6 +53,35 @@ def _limit_rate(symbol: str, trade_date: pd.Timestamp, name: str) -> float:
     if code.startswith(("300", "301")) and trade_date >= pd.Timestamp("2020-08-24"):
         return 0.20
     return 0.10
+
+
+def _is_limit_exempt(
+    symbol: str,
+    trade_date: pd.Timestamp,
+    listed_date: pd.Timestamp | None,
+    listing_session: int | None,
+) -> tuple[bool, str]:
+    if listed_date is None or pd.isna(listed_date) or listing_session is None:
+        return False, ""
+    code, exchange = symbol.split(".")
+    if trade_date < listed_date:
+        return False, ""
+    if (trade_date - listed_date).days > 14:
+        return False, ""
+    if exchange == "BJ" and listing_session == 1:
+        return True, "北交所新股上市首日不设价格涨跌幅限制"
+    if code.startswith(("688", "689")) and listing_session <= 5:
+        return True, "科创板新股上市后前5个交易日不设价格涨跌幅限制"
+    if code.startswith(("300", "301")) and trade_date >= pd.Timestamp("2020-08-24") and listing_session <= 5:
+        return True, "创业板注册制新股上市后前5个交易日不设价格涨跌幅限制"
+    if (
+        exchange in {"SH", "SZ"}
+        and not code.startswith(("300", "301", "688", "689"))
+        and listed_date >= MAIN_BOARD_REGISTRATION_START
+        and listing_session <= 5
+    ):
+        return True, "沪深主板注册制新股上市后前5个交易日不设价格涨跌幅限制"
+    return False, ""
 
 
 def infer_board(symbol: str) -> str:
@@ -127,6 +157,10 @@ def prepare_market_frame(frame: pd.DataFrame) -> pd.DataFrame:
         current["name"] = current["symbol"].map(SAMPLE_NAMES).fillna(current["symbol"])
     else:
         current["name"] = current["name"].fillna(current["symbol"]).astype(str)
+    if "listed_date" in current:
+        current["listed_date"] = pd.to_datetime(current["listed_date"], errors="coerce")
+    else:
+        current["listed_date"] = pd.NaT
     derived_prev_close = current.groupby("symbol", sort=False)["close"].shift(1)
     if "prev_close" in current:
         current["prev_close"] = pd.to_numeric(current["prev_close"], errors="coerce")
@@ -146,6 +180,31 @@ def prepare_market_frame(frame: pd.DataFrame) -> pd.DataFrame:
             current["symbol"], current["trade_date"], current["name"], strict=True
         )
     ]
+    current["limit_rate"] = pd.Series(rates, index=current.index)
+    listing_sessions = pd.Series(index=current.index, dtype="float")
+    for _, group in current.groupby("symbol", sort=False):
+        listed_date = group["listed_date"].dropna().min()
+        if pd.isna(listed_date):
+            continue
+        eligible_index = group[group["trade_date"] >= listed_date].index
+        listing_sessions.loc[eligible_index] = range(1, len(eligible_index) + 1)
+    exemptions = [
+        _is_limit_exempt(
+            symbol,
+            trade_date,
+            listed_date if pd.notna(listed_date) else None,
+            int(session) if pd.notna(session) else None,
+        )
+        for symbol, trade_date, listed_date, session in zip(
+            current["symbol"],
+            current["trade_date"],
+            current["listed_date"],
+            listing_sessions,
+            strict=True,
+        )
+    ]
+    current["limit_exempt"] = [item[0] for item in exemptions]
+    current["limit_reason"] = [item[1] for item in exemptions]
     if "limit_up" not in current:
         current["limit_up"] = current["prev_close"] * (1 + pd.Series(rates, index=current.index))
     if "limit_down" not in current:
@@ -194,8 +253,9 @@ def prepare_market_frame(frame: pd.DataFrame) -> pd.DataFrame:
         )
     )
     ordered = [
-        "trade_date", "symbol", "name", "open", "high", "low", "close",
-        "prev_close", "volume", "amount", "limit_up", "limit_down", "suspended",
+        "trade_date", "symbol", "name", "listed_date", "open", "high", "low", "close",
+        "prev_close", "volume", "amount", "limit_rate", "limit_up", "limit_down",
+        "limit_exempt", "limit_reason", "suspended",
         "adjust_factor", "adjusted_close", "corporate_action", "adjustment_anomaly",
     ]
     return current[ordered].round({"adjust_factor": 8, "adjusted_close": 4}).sort_values(
@@ -288,7 +348,8 @@ def dataset_summary(frame: pd.DataFrame) -> dict:
         "symbols": sorted(current["symbol"].astype(str).unique().tolist()),
         "quality": adjustment_quality_summary(current),
         "preview": current.head(20).assign(
-            trade_date=lambda value: value["trade_date"].dt.strftime("%Y-%m-%d")
+            trade_date=lambda value: value["trade_date"].dt.strftime("%Y-%m-%d"),
+            listed_date=lambda value: value["listed_date"].dt.strftime("%Y-%m-%d").fillna(""),
         ).to_dict(orient="records"),
     }
 
@@ -512,6 +573,8 @@ def extract_security_daily_status(dataset_id: str, frame: pd.DataFrame, source: 
                 "name": str(row.get("name", row["symbol"])),
                 "is_st": is_st_name(row.get("name", "")),
                 "suspended": bool(row.get("suspended", False)),
+                "limit_exempt": bool(row.get("limit_exempt", False)),
+                "limit_reason": str(row.get("limit_reason", "")),
                 "limit_up": float(row["limit_up"]),
                 "limit_down": float(row["limit_down"]),
                 "source": source,

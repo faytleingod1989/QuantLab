@@ -232,6 +232,37 @@ def test_limit_rates_cover_st_star_chinext_and_bj():
     assert limits["920000.BJ"] == 13.0
 
 
+def test_ipo_limit_exemptions_are_versioned_by_board_and_listing_date():
+    frame = prepare_market_frame(
+        pd.DataFrame(
+            {
+                "trade_date": [
+                    "2024-01-02", "2024-01-03",
+                    "2024-01-02", "2024-01-03", "2024-01-04", "2024-01-05", "2024-01-08", "2024-01-09",
+                ],
+                "symbol": [
+                    "920000.BJ", "920000.BJ",
+                    "688001.SH", "688001.SH", "688001.SH", "688001.SH", "688001.SH", "688001.SH",
+                ],
+                "name": ["北交测试", "北交测试", "科创测试", "科创测试", "科创测试", "科创测试", "科创测试", "科创测试"],
+                "listed_date": ["2024-01-02", "2024-01-02", "2024-01-02", "2024-01-02", "2024-01-02", "2024-01-02", "2024-01-02", "2024-01-02"],
+                "open": [10] * 8,
+                "high": [13] * 8,
+                "low": [7] * 8,
+                "close": [10] * 8,
+                "prev_close": [10] * 8,
+                "volume": [1000] * 8,
+            }
+        )
+    )
+    bj = frame[frame["symbol"] == "920000.BJ"].reset_index(drop=True)
+    star = frame[frame["symbol"] == "688001.SH"].reset_index(drop=True)
+    assert bool(bj.iloc[0]["limit_exempt"])
+    assert not bool(bj.iloc[1]["limit_exempt"])
+    assert star.iloc[:5]["limit_exempt"].tolist() == [True] * 5
+    assert not bool(star.iloc[5]["limit_exempt"])
+
+
 def test_csv_calendar_filter_removes_non_trading_days_with_calendar_client():
     frame = prepare_market_frame(
         pd.DataFrame(
