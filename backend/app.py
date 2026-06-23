@@ -9,11 +9,25 @@ from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
 
-from .data import SAMPLE_NAMES, dataset_summary, load_csv, load_csv_text, sample_daily, source_status
+from .data import (
+    SAMPLE_NAMES,
+    DataSourceError,
+    dataset_summary,
+    fetch_akshare_dataset,
+    fetch_trading_calendar,
+    filter_to_trading_calendar,
+    load_csv,
+    load_csv_text,
+    load_dataset_view,
+    sample_daily,
+    source_status,
+)
 from .engine import run_backtest
 from .models import (
     BacktestRequest,
+    AkshareDatasetRequest,
     CsvDatasetRequest,
     ProjectCreate,
     StrategyCreate,
@@ -50,7 +64,7 @@ async def lifespan(_: FastAPI):
     task_manager.shutdown()
 
 
-app = FastAPI(title="QuantLab A 股回测 API", version="0.3.0", lifespan=lifespan)
+app = FastAPI(title="QuantLab A 股回测 API", version="0.4.0", lifespan=lifespan)
 allowed_origins = [
     item.strip()
     for item in os.getenv(
@@ -126,7 +140,6 @@ def _validate_demo_symbols(request: BacktestRequest) -> None:
 
 @app.post("/api/backtests", status_code=202)
 def create_backtest(request: BacktestRequest) -> dict:
-    _validate_demo_symbols(request)
     if request.strategy_version_id:
         version = repository.get_strategy_version(request.strategy_version_id)
         if not version:
@@ -140,6 +153,15 @@ def create_backtest(request: BacktestRequest) -> dict:
         if not dataset:
             raise HTTPException(status_code=400, detail="数据集不存在")
         request.dataset_fingerprint = dataset["fingerprint"]
+        try:
+            load_dataset_view(
+                dataset["path"], request.symbols, request.start_date,
+                request.end_date, request.benchmark,
+            )
+        except (OSError, ValueError) as error:
+            raise HTTPException(status_code=400, detail=str(error)) from error
+    else:
+        _validate_demo_symbols(request)
     return task_manager.submit(request)
 
 
@@ -182,36 +204,64 @@ def list_datasets() -> list[dict]:
     return repository.list_datasets()
 
 
-@app.post("/api/datasets/csv", status_code=201)
-def import_csv_dataset(payload: CsvDatasetRequest) -> dict:
-    try:
-        frame = load_csv_text(payload.csv_text)
-    except (ValueError, UnicodeError) as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
+def _persist_dataset(name: str, frame, source: str) -> dict:
     normalized = frame.to_csv(index=False, date_format="%Y-%m-%d").encode("utf-8")
     fingerprint = hashlib.sha256(normalized).hexdigest()
+    summary = dataset_summary(frame)
     existing = repository.find_dataset_by_fingerprint(fingerprint)
     if existing:
-        return {**existing, "duplicate": True, "summary": dataset_summary(frame)}
+        return {**existing, "duplicate": True, "summary": summary}
     dataset_id = uuid4().hex
     dataset_directory = database_path.parent / "datasets"
     dataset_directory.mkdir(parents=True, exist_ok=True)
     dataset_path = dataset_directory / f"{dataset_id}.csv"
     dataset_path.write_bytes(normalized)
-    summary = dataset_summary(frame)
     record = repository.create_dataset(
         {
-            "id": dataset_id,
-            "name": payload.name,
-            "path": str(dataset_path),
-            "fingerprint": fingerprint,
-            "row_count": summary["row_count"],
-            "symbol_count": summary["symbol_count"],
-            "start_date": summary["start_date"],
-            "end_date": summary["end_date"],
+            "id": dataset_id, "name": name, "path": str(dataset_path),
+            "fingerprint": fingerprint, "row_count": summary["row_count"],
+            "symbol_count": summary["symbol_count"], "start_date": summary["start_date"],
+            "end_date": summary["end_date"], "source": source,
         }
     )
     return {**record, "duplicate": False, "summary": summary}
+
+
+@app.post("/api/datasets/csv", status_code=201)
+def import_csv_dataset(payload: CsvDatasetRequest) -> dict:
+    try:
+        frame = load_csv_text(payload.csv_text)
+        frame = filter_to_trading_calendar(frame)
+    except (ValueError, UnicodeError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return _persist_dataset(payload.name, frame, "csv")
+
+
+@app.post("/api/datasets/akshare", status_code=201)
+async def sync_akshare_dataset(payload: AkshareDatasetRequest) -> dict:
+    try:
+        frame = await run_in_threadpool(
+            fetch_akshare_dataset,
+            payload.symbols, payload.start_date, payload.end_date, payload.benchmark
+        )
+    except (DataSourceError, ValueError) as error:
+        logger.warning("akshare_sync_failed error=%s", error)
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    return await run_in_threadpool(_persist_dataset, payload.name, frame, "akshare")
+
+
+@app.get("/api/data/calendar")
+def trading_calendar(start_date: str, end_date: str) -> dict:
+    try:
+        calendar = fetch_trading_calendar(start_date, end_date)
+    except DataSourceError as error:
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    return {
+        "start_date": start_date,
+        "end_date": end_date,
+        "count": int(len(calendar)),
+        "dates": calendar["trade_date"].dt.strftime("%Y-%m-%d").tolist(),
+    }
 
 
 @app.get("/api/datasets/{dataset_id}/preview")

@@ -101,6 +101,8 @@ def _cross_frame(symbol: str, *, blocked: str | None = None) -> pd.DataFrame:
     )
     if blocked == "limit_up":
         frame.loc[5, "limit_up"] = frame.loc[5, "open"]
+    if blocked == "limit_up_cent_rounding":
+        frame.loc[5, "limit_up"] = frame.loc[5, "open"] + 0.004
     if blocked == "suspended":
         frame.loc[5, "suspended"] = True
     return frame
@@ -126,6 +128,15 @@ def _cross_request(symbols: list[str], max_position: float = 0.95) -> BacktestRe
 def test_limit_up_blocks_buy_and_records_event():
     request = _cross_request(["AAA.SH"])
     result = run_backtest({"AAA.SH": _cross_frame("AAA.SH", blocked="limit_up")}, request)
+    assert result["trades"] == []
+    assert any(event["reason"] == "涨停未成交" for event in result["order_events"])
+
+
+def test_limit_up_comparison_rounds_prices_to_cents():
+    request = _cross_request(["AAA.SH"])
+    result = run_backtest(
+        {"AAA.SH": _cross_frame("AAA.SH", blocked="limit_up_cent_rounding")}, request
+    )
     assert result["trades"] == []
     assert any(event["reason"] == "涨停未成交" for event in result["order_events"])
 

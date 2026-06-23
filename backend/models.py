@@ -72,6 +72,20 @@ class CsvDatasetRequest(BaseModel):
     csv_text: str = Field(min_length=1, max_length=10_000_000)
 
 
+class AkshareDatasetRequest(BaseModel):
+    name: str = Field(default="AkShare 沪深日线", min_length=1, max_length=100)
+    symbols: list[str] = Field(min_length=1, max_length=20)
+    start_date: str
+    end_date: str
+    benchmark: str = "000300.SH"
+
+    @model_validator(mode="after")
+    def validate_dates(self):
+        if self.start_date >= self.end_date:
+            raise ValueError("结束日期必须晚于开始日期")
+        return self
+
+
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str = Field(default="", max_length=500)

@@ -1,0 +1,160 @@
+import pandas as pd
+
+from backend.data import (
+    fetch_akshare_dataset,
+    filter_to_trading_calendar,
+    load_dataset_view,
+    prepare_market_frame,
+)
+
+
+class FakeAkshare:
+    @staticmethod
+    def stock_zh_a_hist(**_):
+        return pd.DataFrame(
+            {
+                "日期": ["2024-01-02", "2024-01-03"],
+                "股票代码": ["600519", "600519"],
+                "名称": ["贵州茅台", "贵州茅台"],
+                "开盘": [10.0, 10.2], "收盘": [10.2, 10.5],
+                "最高": [10.4, 10.6], "最低": [9.9, 10.1],
+                "成交量": [1000, 1200], "成交额": [10200, 12600],
+            }
+        )
+
+    @staticmethod
+    def stock_zh_index_daily_em(**_):
+        return pd.DataFrame(
+            {
+                "date": ["2024-01-02", "2024-01-03"],
+                "open": [100.0, 101.0], "close": [101.0, 102.0],
+                "high": [102.0, 103.0], "low": [99.0, 100.0],
+                "volume": [10000, 12000], "amount": [1_010_000, 1_224_000],
+            }
+        )
+
+    @staticmethod
+    def tool_trade_date_hist_sina():
+        return pd.DataFrame({"trade_date": ["2024-01-02", "2024-01-03"]})
+
+
+class FakeFallbackAkshare(FakeAkshare):
+    @staticmethod
+    def stock_zh_a_hist(**_):
+        raise RuntimeError("eastmoney unavailable")
+
+    @staticmethod
+    def stock_zh_a_daily(**_):
+        return pd.DataFrame(
+            {
+                "date": ["2024-01-02", "2024-01-03"],
+                "open": [9.8, 10.0], "close": [10.0, 10.3],
+                "high": [10.1, 10.4], "low": [9.7, 9.9],
+                "volume": [10000, 12000], "amount": [100_000, 123_600],
+            }
+        )
+
+
+def test_prepare_market_frame_enriches_reproducibility_fields():
+    frame = prepare_market_frame(
+        pd.DataFrame(
+            {
+                "trade_date": ["2024-01-02", "2024-01-03"],
+                "symbol": ["300001", "300001"],
+                "open": [10, 10.5], "high": [10.8, 11], "low": [9.8, 10.3],
+                "close": [10.5, 10.8], "volume": [1000, 1200],
+            }
+        )
+    )
+    assert frame.iloc[0]["symbol"] == "300001.SZ"
+    assert frame.iloc[1]["prev_close"] == 10.5
+    assert frame.iloc[1]["limit_up"] == 12.6
+    assert not bool(frame.iloc[0]["suspended"])
+
+
+def test_dataset_view_is_scoped_by_symbol_and_date(tmp_path):
+    frame = fetch_akshare_dataset(
+        ["600519.SH"], "2024-01-01", "2024-01-05", client=FakeAkshare
+    )
+    path = tmp_path / "snapshot.csv"
+    frame.to_csv(path, index=False)
+    data, benchmark = load_dataset_view(
+        path, ["600519.SH"], "2024-01-03", "2024-01-05", "000300.SH"
+    )
+    assert list(data) == ["600519.SH"]
+    assert len(data["600519.SH"]) == 1
+    assert len(benchmark) == 1
+
+
+def test_akshare_adapter_normalizes_stock_index_and_calendar():
+    frame = fetch_akshare_dataset(
+        ["600519.SH"], "2024-01-01", "2024-01-05", client=FakeAkshare
+    )
+    assert set(frame["symbol"]) == {"600519.SH", "000300.SH"}
+    assert frame[frame["symbol"] == "600519.SH"].iloc[0]["name"] == "贵州茅台"
+    assert {"prev_close", "limit_up", "limit_down", "suspended"} <= set(frame.columns)
+
+
+def test_akshare_adapter_falls_back_to_sina_schema():
+    frame = fetch_akshare_dataset(
+        ["600519.SH"], "2024-01-01", "2024-01-05", client=FakeFallbackAkshare
+    )
+    stock = frame[frame["symbol"] == "600519.SH"]
+    assert len(stock) == 2
+    assert stock.iloc[0]["open"] == 9.8
+    assert stock.iloc[0]["name"] == "贵州茅台"
+
+
+def test_limit_rates_cover_st_star_chinext_and_bj():
+    frame = prepare_market_frame(
+        pd.DataFrame(
+            {
+                "trade_date": ["2024-01-03"] * 4,
+                "symbol": ["600000.SH", "688001.SH", "300001.SZ", "830000.BJ"],
+                "name": ["ST浦发", "科创测试", "创业测试", "北交测试"],
+                "open": [10, 10, 10, 10],
+                "high": [10.5, 12, 12, 13],
+                "low": [9.5, 8, 8, 7],
+                "close": [10, 10, 10, 10],
+                "prev_close": [10, 10, 10, 10],
+                "volume": [1000, 1000, 1000, 1000],
+            }
+        )
+    )
+    limits = {row["symbol"]: row["limit_up"] for _, row in frame.iterrows()}
+    assert limits["600000.SH"] == 10.5
+    assert limits["688001.SH"] == 12.0
+    assert limits["300001.SZ"] == 12.0
+    assert limits["830000.BJ"] == 13.0
+
+
+def test_csv_calendar_filter_removes_non_trading_days_with_calendar_client():
+    frame = prepare_market_frame(
+        pd.DataFrame(
+            {
+                "trade_date": ["2024-01-02", "2024-01-06"],
+                "symbol": ["600519.SH", "600519.SH"],
+                "open": [10, 10.2], "high": [10.4, 10.5],
+                "low": [9.8, 10.1], "close": [10.2, 10.3],
+                "volume": [1000, 1200],
+            }
+        )
+    )
+    filtered = filter_to_trading_calendar(
+        frame, "2024-01-01", "2024-01-07", client=FakeAkshare
+    )
+    assert filtered["trade_date"].dt.strftime("%Y-%m-%d").tolist() == ["2024-01-02"]
+
+
+def test_suspended_string_false_is_not_truthy():
+    frame = prepare_market_frame(
+        pd.DataFrame(
+            {
+                "trade_date": ["2024-01-02"],
+                "symbol": ["600519.SH"],
+                "open": [10], "high": [10.5], "low": [9.8], "close": [10.2],
+                "volume": [1000], "suspended": ["False"],
+            }
+        )
+    )
+    assert not bool(frame.iloc[0]["suspended"])

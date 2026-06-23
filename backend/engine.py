@@ -89,6 +89,22 @@ def _money(value: float) -> float:
     return float(Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
 
+def _price(value) -> Decimal:
+    return Decimal(str(value)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+
+
+def _at_or_below(open_price, limit_price) -> bool:
+    if pd.isna(limit_price):
+        return False
+    return _price(open_price) <= _price(limit_price)
+
+
+def _at_or_above(open_price, limit_price) -> bool:
+    if pd.isna(limit_price):
+        return False
+    return _price(open_price) >= _price(limit_price)
+
+
 def _round(value: float) -> float:
     return round(float(value), 4)
 
@@ -156,7 +172,7 @@ def run_backtest(
             position = positions[symbol]
             if position.available <= 0 or bool(row.get("suspended", False)):
                 continue
-            if float(row["open"]) <= float(row.get("limit_down", -np.inf)) + 1e-8:
+            if _at_or_below(row["open"], row.get("limit_down")):
                 order_events.append({"date": str(date.date()), "symbol": symbol, "reason": "跌停未成交"})
                 continue
             price = _money(float(row["open"]) * (1 - request.slippage_rate))
@@ -185,7 +201,7 @@ def run_backtest(
             row = prepared[symbol].loc[date]
             if bool(row.get("suspended", False)):
                 continue
-            if float(row["open"]) >= float(row.get("limit_up", np.inf)) - 1e-8:
+            if _at_or_above(row["open"], row.get("limit_up")):
                 order_events.append({"date": str(date.date()), "symbol": symbol, "reason": "涨停未成交"})
                 continue
             active_buys.append(symbol)
@@ -346,8 +362,14 @@ def _summarize(
         "monthly_returns": monthly_returns,
         "benchmark": {
             "symbol": request.benchmark,
-            "label": "演示沪深300" if benchmark_is_demo else "沪深300",
+            "label": (
+                "演示沪深300"
+                if benchmark_is_demo
+                else "沪深300" if benchmark_data is not None and not benchmark_data.empty
+                else "沪深300（数据集未提供）"
+            ),
             "is_demo": benchmark_is_demo,
+            "available": benchmark_data is not None and not benchmark_data.empty,
         },
         "trades": list(reversed(trades)),
         "order_events": events,

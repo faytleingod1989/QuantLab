@@ -103,6 +103,7 @@ class BacktestRepository:
             self._ensure_column(connection, "backtest_runs", "strategy_id", "TEXT")
             self._ensure_column(connection, "backtest_runs", "strategy_version_id", "TEXT")
             self._ensure_column(connection, "backtest_runs", "dataset_fingerprint", "TEXT")
+            self._ensure_column(connection, "datasets", "source", "TEXT NOT NULL DEFAULT 'csv'")
 
     @staticmethod
     def _ensure_column(connection: sqlite3.Connection, table: str, column: str, kind: str) -> None:
@@ -227,8 +228,8 @@ class BacktestRepository:
                 """
                 INSERT INTO datasets(
                     id, name, path, fingerprint, row_count, symbol_count,
-                    start_date, end_date, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    start_date, end_date, created_at, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     dataset["id"],
@@ -240,6 +241,7 @@ class BacktestRepository:
                     dataset["start_date"],
                     dataset["end_date"],
                     dataset.get("created_at", utc_now()),
+                    dataset.get("source", "csv"),
                 ),
             )
         return self.get_dataset(dataset["id"])

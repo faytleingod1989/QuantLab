@@ -1,6 +1,6 @@
 # QuantLab
 
-面向沪深 A 股的本地 Web 量化策略研究与日线回测平台。当前版本提供可视化双均线策略、A 股基础交易约束、异步回测、版本化策略管理和可复现的离线演示行情。
+面向沪深 A 股的本地 Web 量化策略研究与日线回测平台。当前版本提供可视化双均线策略、A 股基础交易约束、异步回测、版本化策略管理、AkShare 真实日线、CSV 和可复现演示行情。
 
 ## 已实现
 
@@ -13,6 +13,8 @@
 - 净值曲线、回撤曲线、月度收益热力图和完整交易记录。
 - SQLite 持久化异步任务、进度、取消状态及历史结果。
 - CSV 导入、OHLC 校验、SHA-256 数据指纹、重复检测和预览 API。
+- AkShare 真实沪深日线、沪深300基准、交易日历和东方财富/新浪双源回退。
+- 数据集先固化为不可变快照，再通过日期与标的受限的 DataView 进入回测引擎。
 - 日线数据接口，并通过 `frequency` 抽象预留分钟线扩展。
 
 ## 启动
@@ -40,11 +42,11 @@ Set-Location frontend
 npm run build
 ```
 
-当前回归结果：后端 16 项测试通过，前端生产构建通过。
+当前回归结果：后端 20 项测试通过，前端生产构建通过。
 
 ## 数据说明
 
-尚未接入真实 AkShare 数据时，系统使用确定性的离线演示行情。策略标的与“演示沪深300”基准来自彼此独立的行情序列，但均不是真实证券历史数据，仅用于验证产品流程和回测引擎。
+数据中心可将 AkShare 真实行情同步为本地固定快照，也可导入 CSV。回测任务只读取快照，不在计算过程中联网，以保证结果可复现。AkShare 不可用时仍可使用 CSV 或确定性的离线演示行情；演示行情仅用于验证流程和引擎。
 
 CSV 至少需要以下字段：
 
@@ -52,7 +54,7 @@ CSV 至少需要以下字段：
 trade_date,symbol,open,high,low,close,volume
 ```
 
-数据集接口：`POST /api/datasets/csv`、`GET /api/datasets`、`GET /api/datasets/{id}/preview`。
+数据集接口：`POST /api/datasets/akshare`、`POST /api/datasets/csv`、`GET /api/datasets`、`GET /api/datasets/{id}/preview`。交易日历：`GET /api/data/calendar`。
 
 策略接口：`GET/POST /api/projects`、`GET /api/projects/{id}/strategies`、`POST /api/strategies`、`GET/POST /api/strategies/{id}/versions`。
 

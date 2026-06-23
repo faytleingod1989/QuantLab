@@ -5,7 +5,7 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Event, Lock
 from uuid import uuid4
 
-from .data import sample_daily
+from .data import load_dataset_view, sample_daily
 from .engine import BacktestCancelled, run_backtest
 from .models import BacktestRequest
 from .repository import BacktestRepository, utc_now
@@ -62,17 +62,31 @@ class BacktestTaskManager:
         try:
             if cancelled():
                 raise BacktestCancelled()
-            data = {symbol: sample_daily(symbol) for symbol in request.symbols}
-            benchmark = sample_daily(request.benchmark)
+            if request.dataset_id:
+                dataset = self.repository.get_dataset(request.dataset_id)
+                if not dataset:
+                    raise ValueError("数据集不存在")
+                data, benchmark = load_dataset_view(
+                    dataset["path"], request.symbols, request.start_date,
+                    request.end_date, request.benchmark,
+                )
+                benchmark_is_demo = False
+                data_source = dataset.get("source", "csv")
+            else:
+                data = {symbol: sample_daily(symbol) for symbol in request.symbols}
+                benchmark = sample_daily(request.benchmark)
+                benchmark_is_demo = True
+                data_source = "demo"
             result = run_backtest(
                 data,
                 request,
                 benchmark,
-                benchmark_is_demo=True,
+                benchmark_is_demo=benchmark_is_demo,
                 progress_callback=progress,
                 cancel_check=cancelled,
             )
             result["task_id"] = run_id
+            result["data_source"] = data_source
             self.repository.complete_run(run_id, result)
             logger.info("backtest_completed task_id=%s", run_id)
         except BacktestCancelled:

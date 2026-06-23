@@ -1,5 +1,6 @@
 import time
 
+import pandas as pd
 import pytest
 
 from backend.data import load_csv_text, sample_daily
@@ -95,6 +96,44 @@ def test_async_task_completes_and_persists_result(tmp_path):
     assert current["status"] == "completed"
     assert current["progress"] == 1.0
     assert current["result"]["task_id"] == record["id"]
+
+
+def test_async_task_uses_selected_dataset_snapshot(tmp_path):
+    repository = BacktestRepository(tmp_path / "quantlab.db")
+    snapshot = pd.concat(
+        [
+            sample_daily("600519.SH", "2020-01-01", "2020-12-31"),
+            sample_daily("000300.SH", "2020-01-01", "2020-12-31"),
+        ],
+        ignore_index=True,
+    )
+    path = tmp_path / "snapshot.csv"
+    snapshot.to_csv(path, index=False)
+    repository.create_dataset(
+        {
+            "id": "dataset-1", "name": "测试快照", "path": str(path),
+            "fingerprint": "snapshot-sha", "row_count": len(snapshot),
+            "symbol_count": 2, "start_date": "2020-01-01", "end_date": "2020-12-31",
+            "source": "csv",
+        }
+    )
+    manager = BacktestTaskManager(repository, max_workers=1)
+    record = manager.submit(
+        BacktestRequest(
+            dataset_id="dataset-1", symbols=["600519.SH"],
+            start_date="2020-01-01", end_date="2020-12-31",
+        )
+    )
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        current = repository.get_run(record["id"], include_result=True)
+        if current["status"] in {"completed", "failed", "cancelled"}:
+            break
+        time.sleep(0.02)
+    manager.shutdown()
+    assert current["status"] == "completed"
+    assert current["result"]["data_source"] == "csv"
+    assert current["result"]["benchmark"]["is_demo"] is False
 
 
 def test_engine_cooperative_cancellation():
