@@ -1,20 +1,20 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 
 import { API, initialSettings } from "./appConfig";
 import {
+  ChartLoading,
   DashboardFooter,
-  DrawdownChart,
-  EquityChart,
+  LoadingBanner,
   MetricsStrip,
-  MonthlyHeatmap,
   ReportTitle,
   Sidebar,
   Toast,
   Topbar,
-  TradesTable,
   Workflow,
 } from "./components/dashboard";
 import { DataDrawer, SettingsDrawer, StrategyModal } from "./components/drawers";
+
+const DashboardCharts = lazy(() => import("./components/charts.jsx"));
 
 function App() {
   const [settings, setSettings] = useState(initialSettings);
@@ -31,6 +31,7 @@ function App() {
   const [syncing, setSyncing] = useState(false);
   const [strategyRecord, setStrategyRecord] = useState(null);
   const [savingStrategy, setSavingStrategy] = useState(false);
+  const [booting, setBooting] = useState(true);
 
   const runBacktest = async (candidateSignal) => {
     const signal = candidateSignal?.constructor?.name === "AbortSignal" ? candidateSignal : undefined;
@@ -265,11 +266,15 @@ function App() {
             setProgress(1);
           }
         } else {
+          setBooting(false);
           runBacktest(controller.signal);
         }
       })
       .catch((error) => {
         if (active && error.name !== "AbortError") setSource({ message: "本地服务尚未启动" });
+      })
+      .finally(() => {
+        if (active) setBooting(false);
       });
     return () => {
       active = false;
@@ -316,13 +321,12 @@ function App() {
         />
         <Workflow settings={settings} openStep={openWorkflowStep} />
         <ReportTitle result={result} settings={settings} running={running} onRun={runBacktest} />
+        {booting ? <LoadingBanner message="正在连接本地服务并加载最近一次回测…" /> : null}
+        {running ? <LoadingBanner message={`回测运行中，进度 ${Math.round(progress * 100)}%`} /> : null}
         <MetricsStrip metrics={metrics} />
-        <EquityChart chartData={chartData} result={result} settings={settings} />
-        <DrawdownChart chartData={chartData} metrics={metrics} />
-        <section className="lower-grid">
-          <MonthlyHeatmap years={years} />
-          <TradesTable result={result} />
-        </section>
+        <Suspense fallback={<ChartLoading />}>
+          <DashboardCharts chartData={chartData} result={result} settings={settings} metrics={metrics} years={years} />
+        </Suspense>
         <DashboardFooter settings={settings} source={source} />
       </main>
       {drawer === "settings" ? (
