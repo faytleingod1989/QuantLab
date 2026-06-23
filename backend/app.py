@@ -7,7 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
 
@@ -42,6 +42,7 @@ from .models import (
     VisualStrategy,
 )
 from .repository import BacktestRepository
+from .reports import paginate_trades, render_markdown_report
 from .tasks import BacktestTaskManager
 
 
@@ -266,6 +267,32 @@ def get_backtest_result(run_id: str) -> dict:
     if record["status"] != "completed":
         raise HTTPException(status_code=409, detail=f"任务尚未完成，当前状态: {record['status']}")
     return record["result"]
+
+
+@app.get("/api/backtests/{run_id}/trades")
+def get_backtest_trades(run_id: str, limit: int = 50, offset: int = 0) -> dict:
+    record = repository.get_run(run_id, include_result=True)
+    if not record:
+        raise HTTPException(status_code=404, detail="回测任务不存在")
+    if record["status"] != "completed":
+        raise HTTPException(status_code=409, detail=f"任务尚未完成，当前状态: {record['status']}")
+    return paginate_trades(record["result"], limit=limit, offset=offset)
+
+
+@app.get("/api/backtests/{run_id}/report.md")
+def get_backtest_report(run_id: str) -> Response:
+    record = repository.get_run(run_id, include_result=True)
+    if not record:
+        raise HTTPException(status_code=404, detail="回测任务不存在")
+    if record["status"] != "completed":
+        raise HTTPException(status_code=409, detail=f"任务尚未完成，当前状态: {record['status']}")
+    return Response(
+        content=render_markdown_report(record),
+        media_type="text/markdown; charset=utf-8",
+        headers={
+            "Content-Disposition": f'attachment; filename="quantlab-{run_id}.md"',
+        },
+    )
 
 
 @app.post("/api/backtests/{run_id}/cancel", status_code=202)

@@ -34,7 +34,7 @@ export function Sidebar({ openNav, openSettings }) {
   );
 }
 
-export function Topbar({ settings, setSettings }) {
+export function Topbar({ settings, setSettings, onExportReport, canExportReport }) {
   return (
     <header className="topbar">
       <div><h1>数据驾驶舱</h1><p>结果总览与分析</p></div>
@@ -44,7 +44,9 @@ export function Topbar({ settings, setSettings }) {
           <span>~</span>
           <input type="date" value={settings.end_date} onChange={(event) => setSettings((current) => ({ ...current, end_date: event.target.value }))} />
         </label>
-        <button className="ghost"><DownloadSimple size={18} />导出报告</button>
+        <button className="ghost" onClick={onExportReport} disabled={!canExportReport}>
+          <DownloadSimple size={18} />导出报告
+        </button>
       </div>
     </header>
   );

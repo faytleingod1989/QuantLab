@@ -205,6 +205,14 @@ function App() {
     }
   };
 
+  const exportReport = () => {
+    if (!result?.task_id) {
+      setNotice("请先完成一次回测，再导出报告");
+      return;
+    }
+    window.open(`${API}/backtests/${result.task_id}/report.md`, "_blank", "noopener,noreferrer");
+  };
+
   useEffect(() => {
     fetch(`${API}/datasets`).then((response) => response.json()).then(setDatasets).catch(() => {});
   }, []);
@@ -300,7 +308,12 @@ function App() {
     <div className="app-shell">
       <Sidebar openNav={openNav} openSettings={() => setDrawer("settings")} />
       <main className="main-view">
-        <Topbar settings={settings} setSettings={setSettings} />
+        <Topbar
+          settings={settings}
+          setSettings={setSettings}
+          onExportReport={exportReport}
+          canExportReport={Boolean(result?.task_id)}
+        />
         <Workflow settings={settings} openStep={openWorkflowStep} />
         <ReportTitle result={result} settings={settings} running={running} onRun={runBacktest} />
         <MetricsStrip metrics={metrics} />
