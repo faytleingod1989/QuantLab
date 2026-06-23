@@ -47,7 +47,7 @@ def _rsi(series: pd.Series, period: int) -> pd.Series:
 
 
 def _condition(frame: pd.DataFrame, rule: RuleCondition) -> pd.Series:
-    close = frame["close"]
+    close = frame["signal_close"] if "signal_close" in frame else frame["close"]
     if rule.indicator == "ma_cross":
         left = close.rolling(rule.left).mean()
         right = close.rolling(rule.right).mean()
@@ -125,6 +125,14 @@ def run_backtest(
             (current["trade_date"] >= pd.Timestamp(request.start_date))
             & (current["trade_date"] <= pd.Timestamp(request.end_date))
         ].reset_index(drop=True)
+        if request.signal_price_mode == "adjusted":
+            if "adjusted_close" not in current:
+                raise ValueError("数据缺少 adjusted_close，无法使用复权价计算信号")
+            current["signal_close"] = pd.to_numeric(current["adjusted_close"], errors="coerce")
+            if current["signal_close"].isna().any():
+                raise ValueError("数据包含无法识别的复权收盘价")
+        else:
+            current["signal_close"] = current["close"]
         current["buy_signal"] = _combine(
             current, request.strategy.buy_conditions, request.strategy.buy_logic
         )
@@ -377,6 +385,10 @@ def _summarize(
             "收盘产生信号，下一交易日开盘成交",
             "当日买入股票下一交易日可卖",
             "涨停不买、跌停不卖，价格使用未复权口径",
-            "数据快照保留复权因子与复权收盘价用于质量校验；当前策略信号与撮合均使用未复权收盘/开盘价",
+            (
+                "策略信号使用复权收盘价，撮合、估值、现金和费用仍使用未复权价格"
+                if request.signal_price_mode == "adjusted"
+                else "策略信号、撮合、估值、现金和费用均使用未复权价格"
+            ),
         ],
     }

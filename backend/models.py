@@ -50,6 +50,7 @@ class BacktestRequest(BaseModel):
     lot_size: int = Field(default=100, ge=1)
     benchmark: str = "000300.SH"
     frequency: Literal["1d"] = "1d"
+    signal_price_mode: Literal["unadjusted", "adjusted"] = "unadjusted"
     strategy: VisualStrategy = Field(default_factory=VisualStrategy)
 
     @model_validator(mode="after")

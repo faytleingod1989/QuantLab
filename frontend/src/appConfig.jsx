@@ -25,6 +25,7 @@ export const initialSettings = {
   lot_size: 100,
   benchmark: "000300.SH",
   frequency: "1d",
+  signal_price_mode: "unadjusted",
   strategy: {
     name: "均线多头策略",
     buy_logic: "all",

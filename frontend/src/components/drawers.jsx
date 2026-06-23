@@ -53,8 +53,14 @@ export function SettingsDrawer({ settings, setSettings, onRun, onCancel, running
       <section>
         <h3>数据设置</h3>
         <SettingRow label="数据来源"><span className="static-value">{settings.dataset_id ? "固定数据快照" : "演示数据"}</span></SettingRow>
-        <SettingRow label="复权方式"><span className="static-value">不复权成交</span></SettingRow>
-        <small className="hint">真实行情和 CSV 会先固化为带指纹的数据集，再进入回测。</small>
+        <SettingRow label="信号价格口径">
+          <select value={settings.signal_price_mode || "unadjusted"} onChange={(event) => update("signal_price_mode", event.target.value)}>
+            <option value="unadjusted">未复权收盘价</option>
+            <option value="adjusted">复权收盘价</option>
+          </select>
+        </SettingRow>
+        <SettingRow label="撮合价格口径"><span className="static-value">未复权开盘/收盘</span></SettingRow>
+        <small className="hint">真实行情和 CSV 会先固化为带指纹的数据集；可用复权价算信号，但撮合、现金和费用始终使用未复权价格。</small>
       </section>
       <div className="task-actions">
         {running ? <button className="ghost" onClick={onCancel}>取消</button> : null}

@@ -91,6 +91,7 @@ class BacktestTaskManager:
             result["data_source"] = data_source
             result["data_quality"] = {
                 "price_mode": "unadjusted_execution",
+                "signal_price_mode": request.signal_price_mode,
                 "quality_checks": quality_checks,
             }
             self.repository.complete_run(run_id, result)

@@ -151,6 +151,43 @@ def test_limit_exemption_allows_ipo_day_buy_even_at_limit_price():
     assert not any(event["reason"] == "涨停未成交" for event in result["order_events"])
 
 
+def test_adjusted_signal_mode_uses_adjusted_close_but_executes_unadjusted_open():
+    frame = pd.DataFrame(
+        {
+            "trade_date": pd.bdate_range("2024-01-02", periods=6),
+            "symbol": ["600519.SH"] * 6,
+            "name": ["贵州茅台"] * 6,
+            "open": [10, 10, 10, 10, 10, 10],
+            "high": [10.5, 10.5, 10.5, 10.5, 10.5, 10.5],
+            "low": [9.8, 9.8, 9.8, 9.8, 9.8, 9.8],
+            "close": [10, 10, 10, 10, 10, 10],
+            "adjusted_close": [10, 10, 10, 10, 15, 15],
+            "prev_close": [10, 10, 10, 10, 10, 10],
+            "volume": [1_000_000] * 6,
+            "amount": [10_000_000] * 6,
+            "limit_up": [11] * 6,
+            "limit_down": [9] * 6,
+            "suspended": [False] * 6,
+        }
+    )
+    request = BacktestRequest(
+        symbols=["600519.SH"],
+        start_date="2024-01-02",
+        end_date="2024-01-09",
+        signal_price_mode="adjusted",
+        strategy=VisualStrategy(
+            buy_conditions=[
+                RuleCondition(indicator="price_vs_ma", operator="cross_above", left=2)
+            ],
+            sell_conditions=[],
+        ),
+    )
+    result = run_backtest({"600519.SH": frame}, request)
+    assert any(trade["side"] == "买入" for trade in result["trades"])
+    assert result["trades"][-1]["price"] == 10.0
+    assert any("复权收盘价" in item for item in result["assumptions"])
+
+
 def test_suspension_blocks_buy():
     request = _cross_request(["AAA.SH"])
     result = run_backtest({"AAA.SH": _cross_frame("AAA.SH", blocked="suspended")}, request)

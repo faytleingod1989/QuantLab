@@ -268,6 +268,7 @@ def test_async_task_uses_selected_dataset_snapshot(tmp_path):
     assert current["status"] == "completed"
     assert current["result"]["data_source"] == "csv"
     assert current["result"]["data_quality"]["price_mode"] == "unadjusted_execution"
+    assert current["result"]["data_quality"]["signal_price_mode"] == "unadjusted"
     assert current["result"]["benchmark"]["is_demo"] is False
 
 
