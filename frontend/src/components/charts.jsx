@@ -188,7 +188,34 @@ function OrderEventsSummary({ events }) {
   );
 }
 
-export default function DashboardCharts({ chartData, result, settings, metrics, years, taskId }) {
+function ComparisonPanel({ comparisons }) {
+  return (
+    <section className="chart-panel compare-panel">
+      <div className="panel-head"><b>最近回测对比</b><span>{comparisons?.length || 0} 次</span></div>
+      <div className="table-wrap compare-wrap">
+        <table>
+          <thead><tr><th>策略</th><th>区间</th><th>累计收益</th><th>年化收益</th><th>最大回撤</th><th>夏普</th><th>交易</th></tr></thead>
+          <tbody>
+            {(comparisons || []).map((item) => (
+              <tr key={item.id}>
+                <td>{item.strategy}</td>
+                <td>{item.start_date} ~ {item.end_date}</td>
+                <td className={item.total_return >= 0 ? "positive" : "negative"}>{formatPercent(item.total_return)}</td>
+                <td className={item.annual_return >= 0 ? "positive" : "negative"}>{formatPercent(item.annual_return)}</td>
+                <td className="negative">{formatPercent(item.max_drawdown)}</td>
+                <td>{Number(item.sharpe || 0).toFixed(2)}</td>
+                <td>{item.trade_count}</td>
+              </tr>
+            ))}
+            {!(comparisons || []).length ? <tr><td colSpan="7" className="empty-cell">暂无历史回测可对比</td></tr> : null}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  );
+}
+
+export default function DashboardCharts({ chartData, result, settings, metrics, years, taskId, comparisons }) {
   return (
     <>
       <EquityChart chartData={chartData} result={result} settings={settings} />
@@ -200,6 +227,7 @@ export default function DashboardCharts({ chartData, result, settings, metrics, 
           <TradesTable result={result} taskId={taskId} />
         </div>
       </section>
+      <ComparisonPanel comparisons={comparisons} />
     </>
   );
 }

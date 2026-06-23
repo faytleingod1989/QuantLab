@@ -42,7 +42,13 @@ from .models import (
     VisualStrategy,
 )
 from .repository import BacktestRepository
-from .reports import paginate_trades, render_html_report, render_markdown_report, render_pdf_report
+from .reports import (
+    paginate_trades,
+    render_html_report,
+    render_markdown_report,
+    render_pdf_report,
+    summarize_run_comparison,
+)
 from .tasks import BacktestTaskManager
 
 
@@ -249,6 +255,12 @@ def create_backtest(request: BacktestRequest) -> dict:
 @app.get("/api/backtests")
 def list_backtests(limit: int = 50) -> list[dict]:
     return repository.list_runs(limit=max(1, min(limit, 200)))
+
+
+@app.get("/api/backtests/compare")
+def compare_backtests(limit: int = 6) -> list[dict]:
+    records = repository.list_completed_runs_with_results(limit=max(1, min(limit, 20)))
+    return summarize_run_comparison(records)
 
 
 @app.get("/api/backtests/{run_id}")

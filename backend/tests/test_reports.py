@@ -2,7 +2,13 @@ from io import BytesIO
 
 from pypdf import PdfReader
 
-from backend.reports import paginate_trades, render_html_report, render_markdown_report, render_pdf_report
+from backend.reports import (
+    paginate_trades,
+    render_html_report,
+    render_markdown_report,
+    render_pdf_report,
+    summarize_run_comparison,
+)
 
 
 def test_paginate_trades_clamps_limit_and_offset():
@@ -25,6 +31,24 @@ def test_paginate_trades_filters_by_side():
     assert page["side"] == "买入"
     assert page["total"] == 2
     assert [item["id"] for item in page["items"]] == [1, 3]
+
+
+def test_summarize_run_comparison_extracts_core_metrics():
+    rows = summarize_run_comparison([_sample_record()])
+    assert rows == [
+        {
+            "id": "abc",
+            "strategy": "均线多头",
+            "start_date": "2024-01-01",
+            "end_date": "2024-01-31",
+            "finished_at": None,
+            "total_return": 0.12,
+            "annual_return": 0.2,
+            "max_drawdown": -0.05,
+            "sharpe": 1.2,
+            "trade_count": 1,
+        }
+    ]
 
 
 def test_render_markdown_report_contains_metrics_quality_and_trades():

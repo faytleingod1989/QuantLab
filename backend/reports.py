@@ -26,6 +26,30 @@ def paginate_trades(
     }
 
 
+def summarize_run_comparison(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    rows = []
+    for record in records:
+        result = record.get("result") or {}
+        config = record.get("config") or {}
+        metrics = result.get("metrics") or {}
+        period = result.get("period") or {}
+        rows.append(
+            {
+                "id": record.get("id"),
+                "strategy": _strategy_name(result, config),
+                "start_date": period.get("start", config.get("start_date")),
+                "end_date": period.get("end", config.get("end_date")),
+                "finished_at": record.get("finished_at") or record.get("created_at"),
+                "total_return": float(metrics.get("total_return") or 0),
+                "annual_return": float(metrics.get("annual_return") or 0),
+                "max_drawdown": float(metrics.get("max_drawdown") or 0),
+                "sharpe": float(metrics.get("sharpe") or 0),
+                "trade_count": int(metrics.get("trade_count") or 0),
+            }
+        )
+    return rows
+
+
 def render_markdown_report(record: dict[str, Any]) -> str:
     result = record.get("result") or {}
     config = record.get("config") or {}

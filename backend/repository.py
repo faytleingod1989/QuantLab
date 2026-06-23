@@ -300,6 +300,19 @@ class BacktestRepository:
             ).fetchall()
         return [self._decode(row, include_result=False) for row in rows]
 
+    def list_completed_runs_with_results(self, limit: int = 10) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM backtest_runs
+                WHERE status = 'completed' AND result_json IS NOT NULL
+                ORDER BY finished_at DESC, created_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [self._decode(row, include_result=True) for row in rows]
+
     def mark_interrupted_runs(self) -> int:
         with self._connect() as connection:
             cursor = connection.execute(

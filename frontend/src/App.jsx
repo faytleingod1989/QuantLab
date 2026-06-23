@@ -32,6 +32,14 @@ function App() {
   const [strategyRecord, setStrategyRecord] = useState(null);
   const [savingStrategy, setSavingStrategy] = useState(false);
   const [booting, setBooting] = useState(true);
+  const [comparisons, setComparisons] = useState([]);
+
+  const refreshComparisons = () => {
+    fetch(`${API}/backtests/compare?limit=6`)
+      .then((response) => response.json())
+      .then(setComparisons)
+      .catch(() => {});
+  };
 
   const runBacktest = async (candidateSignal) => {
     const signal = candidateSignal?.constructor?.name === "AbortSignal" ? candidateSignal : undefined;
@@ -69,6 +77,7 @@ function App() {
           const resultResponse = await fetch(`${API}/backtests/${task.id}/result`, { signal });
           if (!resultResponse.ok) throw new Error("无法读取回测结果");
           setResult(await resultResponse.json());
+          refreshComparisons();
           setNotice("回测已完成，结果已持久化");
           break;
         }
@@ -247,11 +256,13 @@ function App() {
       fetch(`${API}/securities`, { signal: controller.signal }).then((response) => response.json()),
       fetch(`${API}/data/status`, { signal: controller.signal }).then((response) => response.json()),
       fetch(`${API}/backtests?limit=1`, { signal: controller.signal }).then((response) => response.json()),
+      fetch(`${API}/backtests/compare?limit=6`, { signal: controller.signal }).then((response) => response.json()),
     ])
-      .then(async ([securityData, sourceData, history]) => {
+      .then(async ([securityData, sourceData, history, comparisonData]) => {
         if (!active) return;
         setSecurities(securityData);
         setSource(sourceData);
+        setComparisons(comparisonData);
         const latest = history[0];
         if (latest?.status === "completed") {
           setSettings((current) => ({
@@ -325,7 +336,7 @@ function App() {
         {running ? <LoadingBanner message={`回测运行中，进度 ${Math.round(progress * 100)}%`} /> : null}
         <MetricsStrip metrics={metrics} />
         <Suspense fallback={<ChartLoading />}>
-          <DashboardCharts chartData={chartData} result={result} settings={settings} metrics={metrics} years={years} taskId={result?.task_id} />
+          <DashboardCharts chartData={chartData} result={result} settings={settings} metrics={metrics} years={years} taskId={result?.task_id} comparisons={comparisons} />
         </Suspense>
         <DashboardFooter settings={settings} source={source} />
       </main>
