@@ -3,7 +3,7 @@ import time
 import pandas as pd
 import pytest
 
-from backend.data import load_csv_text, sample_daily
+from backend.data import extract_security_daily_status, extract_security_master, load_csv_text, sample_daily
 from backend.engine import BacktestCancelled, run_backtest
 from backend.models import BacktestRequest
 from backend.repository import BacktestRepository
@@ -77,6 +77,44 @@ def test_backtest_run_records_reproducibility_references(tmp_path):
     assert record["strategy_id"] == "strategy-1"
     assert record["strategy_version_id"] == "version-3"
     assert record["dataset_fingerprint"] == "sha256-value"
+
+
+def test_repository_persists_security_master_and_daily_status(tmp_path):
+    repository = BacktestRepository(tmp_path / "quantlab.db")
+    frame = sample_daily("600519.SH", "2024-01-02", "2024-01-05")
+    repository.upsert_securities(extract_security_master(frame, "csv"))
+    repository.replace_security_daily_status(
+        "dataset-1", extract_security_daily_status("dataset-1", frame, "csv")
+    )
+    security = repository.get_security("600519.SH")
+    assert security["name"] == "贵州茅台"
+    assert security["board"] == "沪市主板"
+    assert security["listed_date"] == "2024-01-02"
+    status = repository.list_security_daily_status("600519.SH", "2024-01-02", "2024-01-05")
+    assert len(status) == len(frame)
+    assert {"is_st", "suspended", "limit_up", "limit_down"} <= set(status[0])
+
+
+def test_security_lifecycle_validation_rejects_pre_listing_and_delisted(tmp_path):
+    repository = BacktestRepository(tmp_path / "quantlab.db")
+    repository.upsert_securities(
+        [
+            {
+                "symbol": "600000.SH",
+                "name": "浦发银行",
+                "exchange": "SH",
+                "board": "沪市主板",
+                "listed_date": "2024-01-10",
+                "delisted_date": "2024-06-30",
+                "status": "active",
+                "source": "test",
+            }
+        ]
+    )
+    pre_listing = repository.validate_security_window(["600000.SH"], "2024-01-02", "2024-01-31")
+    post_delist = repository.validate_security_window(["600000.SH"], "2024-06-01", "2024-07-31")
+    assert "尚未上市" in pre_listing[0]
+    assert "已退市" in post_delist[0]
 
 
 def test_async_task_completes_and_persists_result(tmp_path):

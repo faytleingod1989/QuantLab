@@ -50,6 +50,24 @@ def _limit_rate(symbol: str, trade_date: pd.Timestamp, name: str) -> float:
     return 0.10
 
 
+def infer_board(symbol: str) -> str:
+    symbol = normalize_symbol(symbol)
+    code, exchange = symbol.split(".")
+    if exchange == "BJ" or code.startswith("8"):
+        return "北交所"
+    if code.startswith(("688", "689")):
+        return "科创板"
+    if code.startswith(("300", "301")):
+        return "创业板"
+    if exchange == "SH":
+        return "沪市主板"
+    return "深市主板"
+
+
+def is_st_name(name: str) -> bool:
+    return "ST" in str(name).upper()
+
+
 def prepare_market_frame(frame: pd.DataFrame) -> pd.DataFrame:
     """Validate and enrich a normalized OHLCV snapshot for deterministic backtests."""
     current = frame.copy()
@@ -205,6 +223,47 @@ def dataset_summary(frame: pd.DataFrame) -> dict:
             trade_date=lambda value: value["trade_date"].dt.strftime("%Y-%m-%d")
         ).to_dict(orient="records"),
     }
+
+
+def extract_security_master(frame: pd.DataFrame, source: str) -> list[dict]:
+    current = prepare_market_frame(frame)
+    records = []
+    for symbol, group in current.groupby("symbol", sort=True):
+        ordered = group.sort_values("trade_date")
+        latest = ordered.iloc[-1]
+        records.append(
+            {
+                "symbol": symbol,
+                "name": str(latest.get("name", symbol)),
+                "exchange": symbol.split(".")[-1],
+                "board": infer_board(symbol),
+                "listed_date": str(ordered["trade_date"].min().date()),
+                "delisted_date": None,
+                "status": "st" if is_st_name(latest.get("name", "")) else "active",
+                "source": source,
+            }
+        )
+    return records
+
+
+def extract_security_daily_status(dataset_id: str, frame: pd.DataFrame, source: str) -> list[dict]:
+    current = prepare_market_frame(frame)
+    records = []
+    for _, row in current.iterrows():
+        records.append(
+            {
+                "dataset_id": dataset_id,
+                "symbol": row["symbol"],
+                "trade_date": str(row["trade_date"].date()),
+                "name": str(row.get("name", row["symbol"])),
+                "is_st": is_st_name(row.get("name", "")),
+                "suspended": bool(row.get("suspended", False)),
+                "limit_up": float(row["limit_up"]),
+                "limit_down": float(row["limit_down"]),
+                "source": source,
+            }
+        )
+    return records
 
 
 def load_dataset_view(

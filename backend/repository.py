@@ -104,6 +104,43 @@ class BacktestRepository:
             self._ensure_column(connection, "backtest_runs", "strategy_version_id", "TEXT")
             self._ensure_column(connection, "backtest_runs", "dataset_fingerprint", "TEXT")
             self._ensure_column(connection, "datasets", "source", "TEXT NOT NULL DEFAULT 'csv'")
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS securities (
+                    symbol TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    exchange TEXT NOT NULL,
+                    board TEXT NOT NULL,
+                    listed_date TEXT NOT NULL,
+                    delisted_date TEXT,
+                    status TEXT NOT NULL DEFAULT 'active',
+                    source TEXT NOT NULL DEFAULT 'seed',
+                    updated_at TEXT NOT NULL
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS security_daily_status (
+                    dataset_id TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    trade_date TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    is_st INTEGER NOT NULL DEFAULT 0,
+                    suspended INTEGER NOT NULL DEFAULT 0,
+                    limit_up REAL NOT NULL,
+                    limit_down REAL NOT NULL,
+                    source TEXT NOT NULL DEFAULT 'csv',
+                    PRIMARY KEY(dataset_id, symbol, trade_date)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_security_daily_status_symbol_date
+                ON security_daily_status(symbol, trade_date)
+                """
+            )
 
     @staticmethod
     def _ensure_column(connection: sqlite3.Connection, table: str, column: str, kind: str) -> None:
@@ -266,6 +303,138 @@ class BacktestRepository:
                 "SELECT * FROM datasets ORDER BY created_at DESC"
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def upsert_securities(self, records: list[dict[str, Any]]) -> None:
+        if not records:
+            return
+        now = utc_now()
+        with self._connect() as connection:
+            connection.executemany(
+                """
+                INSERT INTO securities(
+                    symbol, name, exchange, board, listed_date, delisted_date,
+                    status, source, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol) DO UPDATE SET
+                    name = excluded.name,
+                    exchange = excluded.exchange,
+                    board = excluded.board,
+                    listed_date = MIN(securities.listed_date, excluded.listed_date),
+                    delisted_date = COALESCE(excluded.delisted_date, securities.delisted_date),
+                    status = excluded.status,
+                    source = excluded.source,
+                    updated_at = excluded.updated_at
+                """,
+                [
+                    (
+                        record["symbol"],
+                        record["name"],
+                        record["exchange"],
+                        record["board"],
+                        record["listed_date"],
+                        record.get("delisted_date"),
+                        record.get("status", "active"),
+                        record.get("source", "seed"),
+                        now,
+                    )
+                    for record in records
+                ],
+            )
+
+    def replace_security_daily_status(self, dataset_id: str, records: list[dict[str, Any]]) -> None:
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM security_daily_status WHERE dataset_id = ?", (dataset_id,)
+            )
+            if not records:
+                return
+            connection.executemany(
+                """
+                INSERT OR REPLACE INTO security_daily_status(
+                    dataset_id, symbol, trade_date, name, is_st, suspended,
+                    limit_up, limit_down, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        record["dataset_id"],
+                        record["symbol"],
+                        record["trade_date"],
+                        record["name"],
+                        int(bool(record.get("is_st", False))),
+                        int(bool(record.get("suspended", False))),
+                        float(record["limit_up"]),
+                        float(record["limit_down"]),
+                        record.get("source", "csv"),
+                    )
+                    for record in records
+                ],
+            )
+
+    def list_securities(self, *, include_inactive: bool = False) -> list[dict[str, Any]]:
+        where = "" if include_inactive else "WHERE status != 'delisted'"
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM securities
+                {where}
+                ORDER BY exchange, symbol
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def get_security(self, symbol: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM securities WHERE symbol = ?", (symbol,)
+            ).fetchone()
+        return dict(row) if row else None
+
+    def list_security_daily_status(
+        self, symbol: str, start_date: str | None = None, end_date: str | None = None
+    ) -> list[dict[str, Any]]:
+        filters = ["symbol = ?"]
+        values: list[Any] = [symbol]
+        if start_date:
+            filters.append("trade_date >= ?")
+            values.append(start_date)
+        if end_date:
+            filters.append("trade_date <= ?")
+            values.append(end_date)
+        where = " AND ".join(filters)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM security_daily_status
+                WHERE {where}
+                ORDER BY trade_date DESC, dataset_id DESC
+                LIMIT 2000
+                """,
+                values,
+            ).fetchall()
+        return [
+            {
+                **dict(row),
+                "is_st": bool(row["is_st"]),
+                "suspended": bool(row["suspended"]),
+            }
+            for row in rows
+        ]
+
+    def validate_security_window(
+        self, symbols: list[str], start_date: str, end_date: str
+    ) -> list[str]:
+        errors = []
+        for symbol in symbols:
+            security = self.get_security(symbol)
+            if not security:
+                errors.append(f"{symbol} 缺少证券主数据")
+                continue
+            if security["listed_date"] and start_date < security["listed_date"]:
+                errors.append(f"{symbol} 在回测开始日尚未上市，上市日为 {security['listed_date']}")
+            if security["delisted_date"] and end_date > security["delisted_date"]:
+                errors.append(f"{symbol} 在回测结束日前已退市，退市日为 {security['delisted_date']}")
+        return errors
 
     @staticmethod
     def _decode(row: sqlite3.Row, *, include_result: bool) -> dict[str, Any]:

@@ -15,12 +15,16 @@ from .data import (
     SAMPLE_NAMES,
     DataSourceError,
     dataset_summary,
+    extract_security_daily_status,
+    extract_security_master,
     fetch_akshare_dataset,
     fetch_trading_calendar,
     filter_to_trading_calendar,
+    infer_board,
     load_csv,
     load_csv_text,
     load_dataset_view,
+    normalize_symbol,
     sample_daily,
     source_status,
 )
@@ -53,6 +57,21 @@ database_path = Path(
 repository = BacktestRepository(database_path)
 repository.mark_interrupted_runs()
 repository.ensure_default_project()
+repository.upsert_securities(
+    [
+        {
+            "symbol": symbol,
+            "name": name,
+            "exchange": symbol.split(".")[-1],
+            "board": infer_board(symbol),
+            "listed_date": "1990-12-19",
+            "delisted_date": None,
+            "status": "active",
+            "source": "demo",
+        }
+        for symbol, name in SAMPLE_NAMES.items()
+    ]
+)
 task_manager = BacktestTaskManager(
     repository, max_workers=int(os.getenv("QUANTLAB_BACKTEST_WORKERS", "2"))
 )
@@ -93,10 +112,32 @@ def data_status() -> dict:
 
 @app.get("/api/securities")
 def securities() -> list[dict]:
+    records = repository.list_securities()
+    if records:
+        return records
     return [
-        {"symbol": symbol, "name": name, "exchange": symbol.split(".")[-1]}
+        {
+            "symbol": symbol, "name": name, "exchange": symbol.split(".")[-1],
+            "board": infer_board(symbol), "listed_date": "1990-12-19",
+            "delisted_date": None, "status": "active", "source": "demo",
+        }
         for symbol, name in SAMPLE_NAMES.items()
     ]
+
+
+@app.get("/api/securities/{symbol}/status")
+def security_status(symbol: str, start_date: str | None = None, end_date: str | None = None) -> dict:
+    try:
+        normalized = normalize_symbol(symbol)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    security = repository.get_security(normalized)
+    if not security:
+        raise HTTPException(status_code=404, detail="证券主数据不存在")
+    return {
+        "security": security,
+        "daily_status": repository.list_security_daily_status(normalized, start_date, end_date),
+    }
 
 
 @app.post("/api/backtests/run")
@@ -162,6 +203,15 @@ def create_backtest(request: BacktestRequest) -> dict:
             raise HTTPException(status_code=400, detail=str(error)) from error
     else:
         _validate_demo_symbols(request)
+    try:
+        lifecycle_symbols = [normalize_symbol(symbol) for symbol in request.symbols]
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    lifecycle_errors = repository.validate_security_window(
+        lifecycle_symbols, request.start_date, request.end_date
+    )
+    if lifecycle_errors:
+        raise HTTPException(status_code=400, detail="；".join(lifecycle_errors))
     return task_manager.submit(request)
 
 
@@ -210,6 +260,10 @@ def _persist_dataset(name: str, frame, source: str) -> dict:
     summary = dataset_summary(frame)
     existing = repository.find_dataset_by_fingerprint(fingerprint)
     if existing:
+        repository.upsert_securities(extract_security_master(frame, source))
+        repository.replace_security_daily_status(
+            existing["id"], extract_security_daily_status(existing["id"], frame, source)
+        )
         return {**existing, "duplicate": True, "summary": summary}
     dataset_id = uuid4().hex
     dataset_directory = database_path.parent / "datasets"
@@ -223,6 +277,10 @@ def _persist_dataset(name: str, frame, source: str) -> dict:
             "symbol_count": summary["symbol_count"], "start_date": summary["start_date"],
             "end_date": summary["end_date"], "source": source,
         }
+    )
+    repository.upsert_securities(extract_security_master(frame, source))
+    repository.replace_security_daily_status(
+        dataset_id, extract_security_daily_status(dataset_id, frame, source)
     )
     return {**record, "duplicate": False, "summary": summary}
 
