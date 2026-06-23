@@ -1,4 +1,8 @@
-from backend.reports import paginate_trades, render_markdown_report
+from io import BytesIO
+
+from pypdf import PdfReader
+
+from backend.reports import paginate_trades, render_html_report, render_markdown_report, render_pdf_report
 
 
 def test_paginate_trades_clamps_limit_and_offset():
@@ -63,3 +67,52 @@ def test_render_markdown_report_contains_metrics_quality_and_trades():
     assert "# QuantLab 回测报告：均线策略" in report
     assert "adjustment_continuity" in report
     assert "600519.SH" in report
+
+
+def test_render_html_report_contains_svg_and_order_events():
+    report = render_html_report(_sample_record())
+    assert "<svg" in report
+    assert "涨停未成交" in report
+    assert "600519.SH" in report
+
+
+def test_render_pdf_report_returns_readable_pdf():
+    content = render_pdf_report(_sample_record())
+    assert content.startswith(b"%PDF")
+    reader = PdfReader(BytesIO(content))
+    assert len(reader.pages) >= 1
+
+
+def _sample_record():
+    return {
+        "id": "abc",
+        "status": "completed",
+        "config": {"strategy": {"name": "均线多头"}, "start_date": "2024-01-01", "end_date": "2024-01-31"},
+        "result": {
+            "strategy": "均线多头",
+            "period": {"start": "2024-01-01", "end": "2024-01-31"},
+            "benchmark": {"label": "沪深300"},
+            "metrics": {
+                "total_return": 0.12,
+                "annual_return": 0.2,
+                "max_drawdown": -0.05,
+                "sharpe": 1.2,
+                "win_rate": 0.5,
+                "trade_count": 1,
+                "final_equity": 112000,
+            },
+            "data_quality": {
+                "signal_price_mode": "adjusted",
+                "quality_checks": [{"check_name": "adjustment_continuity", "severity": "pass", "message": "ok"}],
+            },
+            "equity_curve": [
+                {"date": "2024-01-01", "equity": 0.0, "benchmark": 0.0, "drawdown": 0.0},
+                {"date": "2024-01-31", "equity": 0.12, "benchmark": 0.02, "drawdown": -0.01},
+            ],
+            "order_events": [{"reason": "涨停未成交"}],
+            "assumptions": ["T+1"],
+            "trades": [
+                {"date": "2024-01-02", "symbol": "600519.SH", "name": "贵州茅台", "side": "买入", "price": 100, "quantity": 100, "pnl": None}
+            ],
+        },
+    }

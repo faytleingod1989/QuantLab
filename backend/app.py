@@ -42,7 +42,7 @@ from .models import (
     VisualStrategy,
 )
 from .repository import BacktestRepository
-from .reports import paginate_trades, render_markdown_report
+from .reports import paginate_trades, render_html_report, render_markdown_report, render_pdf_report
 from .tasks import BacktestTaskManager
 
 
@@ -291,6 +291,35 @@ def get_backtest_report(run_id: str) -> Response:
         media_type="text/markdown; charset=utf-8",
         headers={
             "Content-Disposition": f'attachment; filename="quantlab-{run_id}.md"',
+        },
+    )
+
+
+@app.get("/api/backtests/{run_id}/report.html")
+def get_backtest_html_report(run_id: str) -> Response:
+    record = repository.get_run(run_id, include_result=True)
+    if not record:
+        raise HTTPException(status_code=404, detail="回测任务不存在")
+    if record["status"] != "completed":
+        raise HTTPException(status_code=409, detail=f"任务尚未完成，当前状态: {record['status']}")
+    return Response(
+        content=render_html_report(record),
+        media_type="text/html; charset=utf-8",
+    )
+
+
+@app.get("/api/backtests/{run_id}/report.pdf")
+def get_backtest_pdf_report(run_id: str) -> Response:
+    record = repository.get_run(run_id, include_result=True)
+    if not record:
+        raise HTTPException(status_code=404, detail="回测任务不存在")
+    if record["status"] != "completed":
+        raise HTTPException(status_code=409, detail=f"任务尚未完成，当前状态: {record['status']}")
+    return Response(
+        content=render_pdf_report(record),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f'attachment; filename="quantlab-{run_id}.pdf"',
         },
     )
 

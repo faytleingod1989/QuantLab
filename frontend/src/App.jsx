@@ -206,12 +206,12 @@ function App() {
     }
   };
 
-  const exportReport = () => {
+  const exportReport = (format = "html") => {
     if (!result?.task_id) {
       setNotice("请先完成一次回测，再导出报告");
       return;
     }
-    window.open(`${API}/backtests/${result.task_id}/report.md`, "_blank", "noopener,noreferrer");
+    window.open(`${API}/backtests/${result.task_id}/report.${format}`, "_blank", "noopener,noreferrer");
   };
 
   useEffect(() => {

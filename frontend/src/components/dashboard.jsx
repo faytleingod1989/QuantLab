@@ -33,8 +33,11 @@ export function Topbar({ settings, setSettings, onExportReport, canExportReport 
           <span>~</span>
           <input type="date" value={settings.end_date} onChange={(event) => setSettings((current) => ({ ...current, end_date: event.target.value }))} />
         </label>
-        <button className="ghost" onClick={onExportReport} disabled={!canExportReport}>
-          <DownloadSimple size={18} />导出报告
+        <button className="ghost" onClick={() => onExportReport("html")} disabled={!canExportReport}>
+          <DownloadSimple size={18} />HTML报告
+        </button>
+        <button className="ghost" onClick={() => onExportReport("pdf")} disabled={!canExportReport}>
+          PDF
         </button>
       </div>
     </header>
