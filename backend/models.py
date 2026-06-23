@@ -47,6 +47,10 @@ class BacktestRequest(BaseModel):
     transfer_fee_rate: float = Field(default=0.00001, ge=0, le=0.01)
     slippage_rate: float = Field(default=0.0002, ge=0, le=0.02)
     max_position: float = Field(default=0.95, gt=0, le=1)
+    max_symbol_position: float = Field(default=0.35, gt=0, le=1)
+    stop_loss_pct: float = Field(default=0.0, ge=0, le=1)
+    take_profit_pct: float = Field(default=0.0, ge=0, le=10)
+    rebalance_days: int = Field(default=1, ge=1, le=250)
     lot_size: int = Field(default=100, ge=1)
     benchmark: str = "000300.SH"
     frequency: Literal["1d"] = "1d"

@@ -141,7 +141,7 @@ function TradesTable({ result, taskId }) {
       </div>
       <div className="table-wrap">
         <table>
-          <thead><tr><th>交易日期</th><th>代码</th><th>名称</th><th>方向</th><th>成交价</th><th>数量</th><th>收益</th></tr></thead>
+          <thead><tr><th>交易日期</th><th>代码</th><th>名称</th><th>方向</th><th>原因</th><th>成交价</th><th>数量</th><th>收益</th></tr></thead>
           <tbody>
             {(page.items || []).map((trade, index) => (
               <tr key={`${trade.date}-${trade.symbol}-${index}`}>
@@ -149,13 +149,14 @@ function TradesTable({ result, taskId }) {
                 <td>{trade.symbol}</td>
                 <td>{trade.name}</td>
                 <td className={trade.side === "买入" ? "negative" : "positive"}>{trade.side}</td>
+                <td>{trade.reason || "信号"}</td>
                 <td>{trade.price}</td>
                 <td>{formatMoney(trade.quantity)}</td>
                 <td className={(trade.pnl || 0) >= 0 ? "positive" : "negative"}>{trade.pnl == null ? "—" : formatMoney(trade.pnl)}</td>
               </tr>
             ))}
             {!(page.items || []).length ? (
-              <tr><td colSpan="7" className="empty-cell">暂无交易记录</td></tr>
+              <tr><td colSpan="8" className="empty-cell">暂无交易记录</td></tr>
             ) : null}
           </tbody>
         </table>

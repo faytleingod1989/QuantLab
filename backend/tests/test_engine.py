@@ -202,6 +202,41 @@ def test_multi_symbol_budget_respects_portfolio_max_position():
     assert buy_value <= request.initial_cash * request.max_position
 
 
+def test_single_symbol_position_cap_limits_buy_value():
+    request = _cross_request(["AAA.SH"], max_position=0.95)
+    request.max_symbol_position = 0.20
+    result = run_backtest({"AAA.SH": _cross_frame("AAA.SH")}, request)
+    buy_value = sum(trade["value"] for trade in result["trades"] if trade["side"] == "买入")
+    assert buy_value <= request.initial_cash * request.max_symbol_position
+
+
+def test_stop_loss_exits_position_before_signal_sell():
+    frame = _cross_frame("AAA.SH")
+    extras = pd.DataFrame(
+        {
+            "trade_date": [pd.Timestamp("2024-01-10"), pd.Timestamp("2024-01-11")],
+            "symbol": ["AAA.SH", "AAA.SH"],
+            "name": ["AAA.SH", "AAA.SH"],
+            "open": [2.0, 2.0],
+            "high": [2.1, 2.1],
+            "low": [1.9, 1.9],
+            "close": [2.0, 2.0],
+            "prev_close": [3.0, 2.0],
+            "volume": [1_000_000, 1_000_000],
+            "amount": [2_000_000, 2_000_000],
+            "limit_up": [3.3, 2.2],
+            "limit_down": [2.7, 1.8],
+            "suspended": [False, False],
+        }
+    )
+    frame = pd.concat([frame, extras], ignore_index=True)
+    request = _cross_request(["AAA.SH"])
+    request.stop_loss_pct = 0.20
+    request.end_date = "2024-01-11"
+    result = run_backtest({"AAA.SH": frame}, request)
+    assert any(trade["side"] == "卖出" and trade["reason"] == "止损" for trade in result["trades"])
+
+
 def test_empty_date_range_is_rejected_cleanly():
     request = BacktestRequest(
         symbols=["600519.SH"], start_date="2030-01-01", end_date="2030-12-31"

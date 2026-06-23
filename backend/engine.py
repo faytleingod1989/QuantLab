@@ -165,14 +165,26 @@ def run_backtest(
         previous_date = all_dates[date_index - 1] if date_index else None
         sell_candidates: list[str] = []
         buy_candidates: list[str] = []
+        sell_reasons: dict[str, str] = {}
         if previous_date is not None:
+            can_rebalance = request.rebalance_days <= 1 or date_index % request.rebalance_days == 0
             for symbol, frame in prepared.items():
                 if date not in frame.index or previous_date not in frame.index:
                     continue
                 previous = frame.loc[previous_date]
-                if positions[symbol].quantity and bool(previous["sell_signal"]):
-                    sell_candidates.append(symbol)
-                elif positions[symbol].quantity == 0 and bool(previous["buy_signal"]):
+                position = positions[symbol]
+                if position.quantity:
+                    holding_return = float(previous["close"]) / position.average_cost - 1 if position.average_cost else 0.0
+                    if request.stop_loss_pct and holding_return <= -request.stop_loss_pct:
+                        sell_candidates.append(symbol)
+                        sell_reasons[symbol] = "止损"
+                    elif request.take_profit_pct and holding_return >= request.take_profit_pct:
+                        sell_candidates.append(symbol)
+                        sell_reasons[symbol] = "止盈"
+                    elif can_rebalance and bool(previous["sell_signal"]):
+                        sell_candidates.append(symbol)
+                        sell_reasons[symbol] = "卖出信号"
+                elif can_rebalance and bool(previous["buy_signal"]):
                     buy_candidates.append(symbol)
 
         for symbol in sell_candidates:
@@ -200,6 +212,7 @@ def run_backtest(
                     "value": value,
                     "fees": fees,
                     "pnl": pnl,
+                    "reason": sell_reasons.get(symbol, "卖出信号"),
                 }
             )
             positions[symbol] = Position()
@@ -234,7 +247,8 @@ def run_backtest(
         for symbol in active_buys:
             row = prepared[symbol].loc[date]
             price = _money(float(row["open"]) * (1 + request.slippage_rate))
-            quantity = int(allocation / price / request.lot_size) * request.lot_size
+            symbol_budget = min(allocation, equity_before_buys * request.max_symbol_position)
+            quantity = int(symbol_budget / price / request.lot_size) * request.lot_size
             while quantity > 0:
                 value = _money(price * quantity)
                 fees = _fee(value, request, False)
@@ -264,6 +278,7 @@ def run_backtest(
                     "value": value,
                     "fees": fees,
                     "pnl": None,
+                    "reason": "买入信号",
                 }
             )
 
@@ -389,6 +404,17 @@ def _summarize(
                 "策略信号使用复权收盘价，撮合、估值、现金和费用仍使用未复权价格"
                 if request.signal_price_mode == "adjusted"
                 else "策略信号、撮合、估值、现金和费用均使用未复权价格"
+            ),
+            f"调仓周期 {request.rebalance_days} 个交易日；单标的仓位上限 {request.max_symbol_position:.0%}",
+            (
+                f"启用止损 {request.stop_loss_pct:.0%}"
+                if request.stop_loss_pct
+                else "未启用止损"
+            ),
+            (
+                f"启用止盈 {request.take_profit_pct:.0%}"
+                if request.take_profit_pct
+                else "未启用止盈"
             ),
         ],
     }

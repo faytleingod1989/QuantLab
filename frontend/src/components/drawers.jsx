@@ -47,6 +47,27 @@ export function SettingsDrawer({ settings, setSettings, onRun, onCancel, running
             <span>%</span>
           </div>
         </SettingRow>
+        <SettingRow label="单股上限">
+          <div className="input-suffix">
+            <input type="number" value={(settings.max_symbol_position || 0.35) * 100} onChange={(event) => update("max_symbol_position", Number(event.target.value) / 100)} />
+            <span>%</span>
+          </div>
+        </SettingRow>
+        <SettingRow label="调仓周期">
+          <input type="number" min="1" max="250" value={settings.rebalance_days || 1} onChange={(event) => update("rebalance_days", Number(event.target.value))} />
+        </SettingRow>
+        <SettingRow label="止损">
+          <div className="input-suffix">
+            <input type="number" value={(settings.stop_loss_pct || 0) * 100} onChange={(event) => update("stop_loss_pct", Number(event.target.value) / 100)} />
+            <span>%</span>
+          </div>
+        </SettingRow>
+        <SettingRow label="止盈">
+          <div className="input-suffix">
+            <input type="number" value={(settings.take_profit_pct || 0) * 100} onChange={(event) => update("take_profit_pct", Number(event.target.value) / 100)} />
+            <span>%</span>
+          </div>
+        </SettingRow>
       </section>
       <section>
         <h3>交易成本（双边）</h3>
