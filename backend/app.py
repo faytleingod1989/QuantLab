@@ -19,6 +19,7 @@ from .data import (
     extract_security_daily_status,
     extract_security_master,
     fetch_akshare_dataset,
+    fetch_akshare_security_master,
     fetch_trading_calendar,
     filter_to_trading_calendar,
     infer_board,
@@ -69,6 +70,9 @@ repository.upsert_securities(
             "delisted_date": None,
             "status": "active",
             "source": "demo",
+            "industry": None,
+            "total_share": None,
+            "float_share": None,
         }
         for symbol, name in SAMPLE_NAMES.items()
     ]
@@ -112,8 +116,8 @@ def data_status() -> dict:
 
 
 @app.get("/api/securities")
-def securities() -> list[dict]:
-    records = repository.list_securities()
+def securities(include_inactive: bool = False) -> list[dict]:
+    records = repository.list_securities(include_inactive=include_inactive)
     if records:
         return records
     return [
@@ -121,9 +125,31 @@ def securities() -> list[dict]:
             "symbol": symbol, "name": name, "exchange": symbol.split(".")[-1],
             "board": infer_board(symbol), "listed_date": "1990-12-19",
             "delisted_date": None, "status": "active", "source": "demo",
+            "industry": None, "total_share": None, "float_share": None,
         }
         for symbol, name in SAMPLE_NAMES.items()
     ]
+
+
+@app.post("/api/securities/sync/akshare", status_code=202)
+async def sync_security_master() -> dict:
+    try:
+        records = await run_in_threadpool(fetch_akshare_security_master)
+    except DataSourceError as error:
+        logger.warning("security_master_sync_failed error=%s", error)
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    await run_in_threadpool(repository.upsert_securities, records)
+    status_counts: dict[str, int] = {}
+    exchange_counts: dict[str, int] = {}
+    for record in records:
+        status_counts[record["status"]] = status_counts.get(record["status"], 0) + 1
+        exchange_counts[record["exchange"]] = exchange_counts.get(record["exchange"], 0) + 1
+    return {
+        "source": "akshare_master",
+        "count": len(records),
+        "status_counts": status_counts,
+        "exchange_counts": exchange_counts,
+    }
 
 
 @app.get("/api/securities/{symbol}/status")

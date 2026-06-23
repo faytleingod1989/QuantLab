@@ -2,6 +2,7 @@ import pandas as pd
 
 from backend.data import (
     adjustment_quality_checks,
+    fetch_akshare_security_master,
     fetch_akshare_dataset,
     filter_to_trading_calendar,
     load_dataset_view,
@@ -52,6 +53,72 @@ class FakeFallbackAkshare(FakeAkshare):
                 "open": [9.8, 10.0], "close": [10.0, 10.3],
                 "high": [10.1, 10.4], "low": [9.7, 9.9],
                 "volume": [10000, 12000], "amount": [100_000, 123_600],
+            }
+        )
+
+
+class FakeSecurityMasterAkshare:
+    @staticmethod
+    def stock_info_sh_name_code():
+        return pd.DataFrame(
+            {
+                "证券代码": ["600519"],
+                "证券简称": ["贵州茅台"],
+                "证券全称": ["贵州茅台"],
+                "公司简称": ["贵州茅台"],
+                "公司全称": ["贵州茅台酒股份有限公司"],
+                "上市日期": ["2001-08-27"],
+            }
+        )
+
+    @staticmethod
+    def stock_info_sz_name_code():
+        return pd.DataFrame(
+            {
+                "板块": ["创业板"],
+                "A股代码": ["300750"],
+                "A股简称": ["宁德时代"],
+                "A股上市日期": ["2018-06-11"],
+                "A股总股本": ["2,400,000,000"],
+                "A股流通股本": ["2,000,000,000"],
+                "所属行业": ["C 制造业"],
+            }
+        )
+
+    @staticmethod
+    def stock_info_bj_name_code():
+        return pd.DataFrame(
+            {
+                "证券代码": ["920000"],
+                "证券简称": ["安徽凤凰"],
+                "总股本": [91680000],
+                "流通股本": [57593925],
+                "上市日期": ["2020-12-23"],
+                "所属行业": ["汽车制造业"],
+                "地区": ["安徽省"],
+                "报告日期": ["2026-06-23"],
+            }
+        )
+
+    @staticmethod
+    def stock_info_sh_delist():
+        return pd.DataFrame(
+            {
+                "公司代码": ["600001"],
+                "公司简称": ["邯郸钢铁"],
+                "上市日期": ["1998-01-22"],
+                "暂停上市日期": ["2009-12-29"],
+            }
+        )
+
+    @staticmethod
+    def stock_info_sz_delist():
+        return pd.DataFrame(
+            {
+                "证券代码": ["000003"],
+                "证券简称": ["PT金田Ａ"],
+                "上市日期": ["1991-01-14"],
+                "终止上市日期": ["2002-06-14"],
             }
         )
 
@@ -129,6 +196,17 @@ def test_akshare_adapter_falls_back_to_sina_schema():
     assert len(stock) == 2
     assert stock.iloc[0]["open"] == 9.8
     assert stock.iloc[0]["name"] == "贵州茅台"
+
+
+def test_akshare_security_master_normalizes_active_and_delisted_records():
+    records = fetch_akshare_security_master(client=FakeSecurityMasterAkshare)
+    by_symbol = {record["symbol"]: record for record in records}
+    assert by_symbol["600519.SH"]["listed_date"] == "2001-08-27"
+    assert by_symbol["300750.SZ"]["board"] == "创业板"
+    assert by_symbol["300750.SZ"]["total_share"] == 2_400_000_000
+    assert by_symbol["920000.BJ"]["exchange"] == "BJ"
+    assert by_symbol["600001.SH"]["status"] == "delisted"
+    assert by_symbol["000003.SZ"]["delisted_date"] == "2002-06-14"
 
 
 def test_limit_rates_cover_st_star_chinext_and_bj():

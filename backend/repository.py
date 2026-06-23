@@ -119,6 +119,9 @@ class BacktestRepository:
                 )
                 """
             )
+            self._ensure_column(connection, "securities", "industry", "TEXT")
+            self._ensure_column(connection, "securities", "total_share", "INTEGER")
+            self._ensure_column(connection, "securities", "float_share", "INTEGER")
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS security_daily_status (
@@ -377,17 +380,28 @@ class BacktestRepository:
                 """
                 INSERT INTO securities(
                     symbol, name, exchange, board, listed_date, delisted_date,
-                    status, source, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    status, source, updated_at, industry, total_share, float_share
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(symbol) DO UPDATE SET
                     name = excluded.name,
                     exchange = excluded.exchange,
                     board = excluded.board,
-                    listed_date = MIN(securities.listed_date, excluded.listed_date),
+                    listed_date = CASE
+                        WHEN excluded.source = 'akshare_master' THEN excluded.listed_date
+                        WHEN securities.source = 'seed' AND excluded.source != 'seed' THEN excluded.listed_date
+                        ELSE MIN(securities.listed_date, excluded.listed_date)
+                    END,
                     delisted_date = COALESCE(excluded.delisted_date, securities.delisted_date),
                     status = excluded.status,
-                    source = excluded.source,
-                    updated_at = excluded.updated_at
+                    source = CASE
+                        WHEN excluded.source = 'akshare_master' OR securities.source = 'seed'
+                        THEN excluded.source
+                        ELSE securities.source
+                    END,
+                    updated_at = excluded.updated_at,
+                    industry = COALESCE(excluded.industry, securities.industry),
+                    total_share = COALESCE(excluded.total_share, securities.total_share),
+                    float_share = COALESCE(excluded.float_share, securities.float_share)
                 """,
                 [
                     (
@@ -400,6 +414,9 @@ class BacktestRepository:
                         record.get("status", "active"),
                         record.get("source", "seed"),
                         now,
+                        record.get("industry"),
+                        record.get("total_share"),
+                        record.get("float_share"),
                     )
                     for record in records
                 ],

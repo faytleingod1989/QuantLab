@@ -26,7 +26,11 @@ class DataSourceError(RuntimeError):
 def normalize_symbol(symbol: str) -> str:
     value = str(symbol).strip().upper()
     if value.isdigit() and len(value) == 6:
-        suffix = "BJ" if value.startswith("8") else "SH" if value.startswith(("5", "6", "9")) else "SZ"
+        suffix = (
+            "BJ"
+            if value.startswith(("8", "920", "430"))
+            else "SH" if value.startswith(("5", "6", "9")) else "SZ"
+        )
         value = f"{value}.{suffix}"
     if not SYMBOL_PATTERN.fullmatch(value):
         raise ValueError(f"无效的 A 股证券代码: {symbol}")
@@ -62,6 +66,29 @@ def infer_board(symbol: str) -> str:
     if exchange == "SH":
         return "沪市主板"
     return "深市主板"
+
+
+def _market_symbol(code, exchange: str) -> str:
+    return f"{str(code).strip().zfill(6)}.{exchange}"
+
+
+def _clean_date(value) -> str:
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return "1990-12-19"
+    return str(parsed.date())
+
+
+def _clean_number(value) -> int | None:
+    if pd.isna(value):
+        return None
+    text = str(value).replace(",", "").strip()
+    if not text or text in {"-", "None", "nan"}:
+        return None
+    try:
+        return int(float(text))
+    except ValueError:
+        return None
 
 
 def is_st_name(name: str) -> bool:
@@ -331,6 +358,125 @@ def adjustment_quality_checks(dataset_id: str, frame: pd.DataFrame) -> list[dict
             }
         )
     return checks
+
+
+def fetch_akshare_security_master(client=None) -> list[dict]:
+    """Fetch A-share security master data from AkShare's exchange-level endpoints."""
+    if client is None:
+        import akshare as client
+
+    records: dict[str, dict] = {}
+
+    def put(record: dict) -> None:
+        symbol = record["symbol"]
+        records[symbol] = {**records.get(symbol, {}), **record}
+
+    try:
+        sh = client.stock_info_sh_name_code()
+        for _, row in sh.iterrows():
+            symbol = _market_symbol(row["证券代码"], "SH")
+            put(
+                {
+                    "symbol": symbol,
+                    "name": str(row["证券简称"]).strip(),
+                    "exchange": "SH",
+                    "board": infer_board(symbol),
+                    "listed_date": _clean_date(row.get("上市日期")),
+                    "delisted_date": None,
+                    "status": "active",
+                    "industry": None,
+                    "total_share": None,
+                    "float_share": None,
+                    "source": "akshare_master",
+                }
+            )
+    except Exception as error:
+        raise DataSourceError(f"AkShare 沪市证券主数据获取失败: {error}") from error
+
+    try:
+        sz = client.stock_info_sz_name_code()
+        for _, row in sz.iterrows():
+            symbol = _market_symbol(row["A股代码"], "SZ")
+            board = "创业板" if "创业" in str(row.get("板块", "")) else infer_board(symbol)
+            put(
+                {
+                    "symbol": symbol,
+                    "name": str(row["A股简称"]).strip(),
+                    "exchange": "SZ",
+                    "board": board,
+                    "listed_date": _clean_date(row.get("A股上市日期")),
+                    "delisted_date": None,
+                    "status": "active",
+                    "industry": str(row.get("所属行业", "")).strip() or None,
+                    "total_share": _clean_number(row.get("A股总股本")),
+                    "float_share": _clean_number(row.get("A股流通股本")),
+                    "source": "akshare_master",
+                }
+            )
+    except Exception as error:
+        raise DataSourceError(f"AkShare 深市证券主数据获取失败: {error}") from error
+
+    try:
+        bj = client.stock_info_bj_name_code()
+        for _, row in bj.iterrows():
+            symbol = _market_symbol(row["证券代码"], "BJ")
+            put(
+                {
+                    "symbol": symbol,
+                    "name": str(row["证券简称"]).strip(),
+                    "exchange": "BJ",
+                    "board": "北交所",
+                    "listed_date": _clean_date(row.get("上市日期")),
+                    "delisted_date": None,
+                    "status": "active",
+                    "industry": str(row.get("所属行业", "")).strip() or None,
+                    "total_share": _clean_number(row.get("总股本")),
+                    "float_share": _clean_number(row.get("流通股本")),
+                    "source": "akshare_master",
+                }
+            )
+    except Exception as error:
+        raise DataSourceError(f"AkShare 北交所证券主数据获取失败: {error}") from error
+
+    try:
+        sh_delist = client.stock_info_sh_delist()
+        for _, row in sh_delist.iterrows():
+            symbol = _market_symbol(row["公司代码"], "SH")
+            put(
+                {
+                    "symbol": symbol,
+                    "name": str(row["公司简称"]).strip(),
+                    "exchange": "SH",
+                    "board": infer_board(symbol),
+                    "listed_date": _clean_date(row.get("上市日期")),
+                    "delisted_date": _clean_date(row.get("暂停上市日期")),
+                    "status": "delisted",
+                    "source": "akshare_master",
+                }
+            )
+    except Exception as error:
+        raise DataSourceError(f"AkShare 沪市退市证券获取失败: {error}") from error
+
+    try:
+        sz_delist = client.stock_info_sz_delist()
+        for _, row in sz_delist.iterrows():
+            symbol = _market_symbol(row["证券代码"], "SZ")
+            put(
+                {
+                    "symbol": symbol,
+                    "name": str(row["证券简称"]).strip(),
+                    "exchange": "SZ",
+                    "board": infer_board(symbol),
+                    "listed_date": _clean_date(row.get("上市日期")),
+                    "delisted_date": _clean_date(row.get("终止上市日期")),
+                    "status": "delisted",
+                    "source": "akshare_master",
+                }
+            )
+    except Exception as error:
+        raise DataSourceError(f"AkShare 深市退市证券获取失败: {error}") from error
+
+    return sorted(records.values(), key=lambda item: (item["exchange"], item["symbol"]))
 
 
 def extract_security_master(frame: pd.DataFrame, source: str) -> list[dict]:
