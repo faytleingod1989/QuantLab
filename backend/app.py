@@ -140,6 +140,7 @@ async def sync_security_master() -> dict:
         logger.warning("security_master_sync_failed error=%s", error)
         raise HTTPException(status_code=502, detail=str(error)) from error
     await run_in_threadpool(repository.upsert_securities, records)
+    await run_in_threadpool(repository.upsert_industry_history, records)
     status_counts: dict[str, int] = {}
     exchange_counts: dict[str, int] = {}
     for record in records:
@@ -165,6 +166,7 @@ def security_status(symbol: str, start_date: str | None = None, end_date: str | 
     return {
         "security": security,
         "daily_status": repository.list_security_daily_status(normalized, start_date, end_date),
+        "industry_history": repository.list_industry_history(normalized),
     }
 
 
@@ -306,7 +308,9 @@ def _persist_dataset(name: str, frame, source: str) -> dict:
     summary = dataset_summary(frame)
     existing = repository.find_dataset_by_fingerprint(fingerprint)
     if existing:
-        repository.upsert_securities(extract_security_master(frame, source))
+        security_master = extract_security_master(frame, source)
+        repository.upsert_securities(security_master)
+        repository.upsert_industry_history(security_master)
         repository.replace_security_daily_status(
             existing["id"], extract_security_daily_status(existing["id"], frame, source)
         )
@@ -327,7 +331,9 @@ def _persist_dataset(name: str, frame, source: str) -> dict:
             "end_date": summary["end_date"], "source": source,
         }
     )
-    repository.upsert_securities(extract_security_master(frame, source))
+    security_master = extract_security_master(frame, source)
+    repository.upsert_securities(security_master)
+    repository.upsert_industry_history(security_master)
     repository.replace_security_daily_status(
         dataset_id, extract_security_daily_status(dataset_id, frame, source)
     )

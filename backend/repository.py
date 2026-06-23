@@ -156,6 +156,31 @@ class BacktestRepository:
                 "limit_reason",
                 "TEXT NOT NULL DEFAULT ''",
             )
+            self._ensure_column(
+                connection,
+                "security_daily_status",
+                "suspension_streak",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            self._ensure_column(
+                connection,
+                "security_daily_status",
+                "long_suspended",
+                "INTEGER NOT NULL DEFAULT 0",
+            )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS security_industry_history (
+                    symbol TEXT NOT NULL,
+                    valid_from TEXT NOT NULL,
+                    industry TEXT,
+                    board TEXT NOT NULL,
+                    source TEXT NOT NULL DEFAULT 'unknown',
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(symbol, valid_from, source)
+                )
+                """
+            )
             connection.execute(
                 """
                 CREATE TABLE IF NOT EXISTS dataset_quality_checks (
@@ -460,8 +485,9 @@ class BacktestRepository:
                 """
                 INSERT OR REPLACE INTO security_daily_status(
                     dataset_id, symbol, trade_date, name, is_st, suspended,
-                    limit_exempt, limit_reason, limit_up, limit_down, source
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    suspension_streak, long_suspended, limit_exempt, limit_reason,
+                    limit_up, limit_down, source
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 [
                     (
@@ -471,6 +497,8 @@ class BacktestRepository:
                         record["name"],
                         int(bool(record.get("is_st", False))),
                         int(bool(record.get("suspended", False))),
+                        int(record.get("suspension_streak", 0)),
+                        int(bool(record.get("long_suspended", False))),
                         int(bool(record.get("limit_exempt", False))),
                         record.get("limit_reason", ""),
                         float(record["limit_up"]),
@@ -528,9 +556,47 @@ class BacktestRepository:
                 "is_st": bool(row["is_st"]),
                 "suspended": bool(row["suspended"]),
                 "limit_exempt": bool(row["limit_exempt"]),
+                "long_suspended": bool(row["long_suspended"]),
             }
             for row in rows
         ]
+
+    def upsert_industry_history(self, records: list[dict[str, Any]]) -> None:
+        if not records:
+            return
+        now = utc_now()
+        with self._connect() as connection:
+            connection.executemany(
+                """
+                INSERT OR REPLACE INTO security_industry_history(
+                    symbol, valid_from, industry, board, source, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        record["symbol"],
+                        record.get("valid_from") or record.get("listed_date") or "1990-12-19",
+                        record.get("industry"),
+                        record.get("board", ""),
+                        record.get("source", "unknown"),
+                        now,
+                    )
+                    for record in records
+                    if record.get("industry") or record.get("board")
+                ],
+            )
+
+    def list_industry_history(self, symbol: str) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM security_industry_history
+                WHERE symbol = ?
+                ORDER BY valid_from DESC, updated_at DESC
+                """,
+                (symbol,),
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def validate_security_window(
         self, symbols: list[str], start_date: str, end_date: str

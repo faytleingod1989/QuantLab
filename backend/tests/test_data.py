@@ -2,6 +2,7 @@ import pandas as pd
 
 from backend.data import (
     adjustment_quality_checks,
+    extract_security_daily_status,
     fetch_akshare_security_master,
     fetch_akshare_dataset,
     filter_to_trading_calendar,
@@ -293,3 +294,25 @@ def test_suspended_string_false_is_not_truthy():
         )
     )
     assert not bool(frame.iloc[0]["suspended"])
+
+
+def test_daily_status_marks_long_suspension_after_threshold():
+    frame = prepare_market_frame(
+        pd.DataFrame(
+            {
+                "trade_date": pd.bdate_range("2024-01-02", periods=4),
+                "symbol": ["600519.SH"] * 4,
+                "open": [10, 10, 10, 10],
+                "high": [10.5, 10.5, 10.5, 10.5],
+                "low": [9.8, 9.8, 9.8, 9.8],
+                "close": [10.2, 10.2, 10.2, 10.2],
+                "volume": [0, 0, 0, 1000],
+            }
+        )
+    )
+    records = extract_security_daily_status(
+        "dataset-1", frame, "csv", long_suspension_days=3
+    )
+    assert [record["suspension_streak"] for record in records] == [1, 2, 3, 0]
+    assert records[2]["long_suspended"] is True
+    assert records[3]["long_suspended"] is False

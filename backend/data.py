@@ -555,31 +555,41 @@ def extract_security_master(frame: pd.DataFrame, source: str) -> list[dict]:
                 "listed_date": str(ordered["trade_date"].min().date()),
                 "delisted_date": None,
                 "status": "st" if is_st_name(latest.get("name", "")) else "active",
+                "industry": str(latest.get("industry", "")).strip() or None,
+                "valid_from": str(ordered["trade_date"].min().date()),
                 "source": source,
             }
         )
     return records
 
 
-def extract_security_daily_status(dataset_id: str, frame: pd.DataFrame, source: str) -> list[dict]:
+def extract_security_daily_status(
+    dataset_id: str, frame: pd.DataFrame, source: str, long_suspension_days: int = 20
+) -> list[dict]:
     current = prepare_market_frame(frame)
     records = []
-    for _, row in current.iterrows():
-        records.append(
-            {
-                "dataset_id": dataset_id,
-                "symbol": row["symbol"],
-                "trade_date": str(row["trade_date"].date()),
-                "name": str(row.get("name", row["symbol"])),
-                "is_st": is_st_name(row.get("name", "")),
-                "suspended": bool(row.get("suspended", False)),
-                "limit_exempt": bool(row.get("limit_exempt", False)),
-                "limit_reason": str(row.get("limit_reason", "")),
-                "limit_up": float(row["limit_up"]),
-                "limit_down": float(row["limit_down"]),
-                "source": source,
-            }
-        )
+    for _, group in current.groupby("symbol", sort=True):
+        streak = 0
+        for _, row in group.sort_values("trade_date").iterrows():
+            suspended = bool(row.get("suspended", False))
+            streak = streak + 1 if suspended else 0
+            records.append(
+                {
+                    "dataset_id": dataset_id,
+                    "symbol": row["symbol"],
+                    "trade_date": str(row["trade_date"].date()),
+                    "name": str(row.get("name", row["symbol"])),
+                    "is_st": is_st_name(row.get("name", "")),
+                    "suspended": suspended,
+                    "suspension_streak": streak,
+                    "long_suspended": streak >= long_suspension_days,
+                    "limit_exempt": bool(row.get("limit_exempt", False)),
+                    "limit_reason": str(row.get("limit_reason", "")),
+                    "limit_up": float(row["limit_up"]),
+                    "limit_down": float(row["limit_down"]),
+                    "source": source,
+                }
+            )
     return records
 
 

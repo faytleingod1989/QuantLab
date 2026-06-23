@@ -1,4 +1,9 @@
 import {
+  useMemo,
+  useState,
+} from "react";
+
+import {
   Check,
   Database,
   Play,
@@ -147,6 +152,19 @@ export function DataDrawer({
   onSelectDataset,
   close,
 }) {
+  const [query, setQuery] = useState("");
+  const filteredSecurities = useMemo(() => {
+    const keyword = query.trim().toLowerCase();
+    return keyword
+      ? securities.filter((item) =>
+          `${item.symbol} ${item.name} ${item.board || ""} ${item.industry || ""}`
+            .toLowerCase()
+            .includes(keyword)
+        )
+      : securities;
+  }, [query, securities]);
+  const visibleSecurities = filteredSecurities.slice(0, 200);
+  const hiddenCount = Math.max(0, filteredSecurities.length - visibleSecurities.length);
   const toggle = (symbol) =>
     setSettings((current) => ({
       ...current,
@@ -187,14 +205,28 @@ export function DataDrawer({
           ))}
         </div>
         {!settings.dataset_id ? (
-          <div className="security-list">
-            {securities.map((item) => (
+          <>
+            <div className="security-search">
+              <input
+                type="search"
+                placeholder="搜索代码、名称、板块或行业"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+              />
+              <small>
+                显示 {visibleSecurities.length} / {filteredSecurities.length} 只
+                {hiddenCount ? `，还有 ${hiddenCount} 只可继续搜索` : ""}
+              </small>
+            </div>
+            <div className="security-list">
+              {visibleSecurities.map((item) => (
               <button key={item.symbol} className={settings.symbols.includes(item.symbol) ? "selected" : ""} onClick={() => toggle(item.symbol)}>
-                <span><b>{item.name}</b><small>{item.symbol}</small></span>
+                <span><b>{item.name}</b><small>{item.symbol} · {item.board || item.exchange}</small></span>
                 {settings.symbols.includes(item.symbol) ? <Check size={18} weight="bold" /> : null}
               </button>
             ))}
-          </div>
+            </div>
+          </>
         ) : null}
         <div className="modal-actions">
           <span className="selection-count">{settings.dataset_id ? "已选择固定数据快照" : `已选择 ${settings.symbols.length} 只股票`}</span>
