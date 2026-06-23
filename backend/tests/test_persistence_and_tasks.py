@@ -95,6 +95,25 @@ def test_repository_persists_security_master_and_daily_status(tmp_path):
     assert {"is_st", "suspended", "limit_up", "limit_down"} <= set(status[0])
 
 
+def test_repository_persists_dataset_quality_checks(tmp_path):
+    repository = BacktestRepository(tmp_path / "quantlab.db")
+    repository.replace_dataset_quality_checks(
+        "dataset-1",
+        [
+            {
+                "dataset_id": "dataset-1",
+                "check_name": "adjustment_continuity",
+                "severity": "warning",
+                "message": "复权连续性检查发现异常跳变。",
+                "details": {"symbols": ["600519.SH"]},
+            }
+        ],
+    )
+    checks = repository.list_dataset_quality_checks("dataset-1")
+    assert checks[0]["severity"] == "warning"
+    assert checks[0]["details"]["symbols"] == ["600519.SH"]
+
+
 def test_security_lifecycle_validation_rejects_pre_listing_and_delisted(tmp_path):
     repository = BacktestRepository(tmp_path / "quantlab.db")
     repository.upsert_securities(
@@ -171,6 +190,7 @@ def test_async_task_uses_selected_dataset_snapshot(tmp_path):
     manager.shutdown()
     assert current["status"] == "completed"
     assert current["result"]["data_source"] == "csv"
+    assert current["result"]["data_quality"]["price_mode"] == "unadjusted_execution"
     assert current["result"]["benchmark"]["is_demo"] is False
 
 

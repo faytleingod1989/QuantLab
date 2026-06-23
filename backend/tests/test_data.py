@@ -1,6 +1,7 @@
 import pandas as pd
 
 from backend.data import (
+    adjustment_quality_checks,
     fetch_akshare_dataset,
     filter_to_trading_calendar,
     load_dataset_view,
@@ -69,7 +70,32 @@ def test_prepare_market_frame_enriches_reproducibility_fields():
     assert frame.iloc[0]["symbol"] == "300001.SZ"
     assert frame.iloc[1]["prev_close"] == 10.5
     assert frame.iloc[1]["limit_up"] == 12.6
+    assert frame.iloc[0]["adjust_factor"] == 1.0
+    assert frame.iloc[0]["adjusted_close"] == 10.5
     assert not bool(frame.iloc[0]["suspended"])
+
+
+def test_adjustment_factor_marks_corporate_actions_and_anomalies():
+    frame = prepare_market_frame(
+        pd.DataFrame(
+            {
+                "trade_date": ["2024-01-02", "2024-01-03", "2024-01-04"],
+                "symbol": ["600519.SH", "600519.SH", "600519.SH"],
+                "open": [10, 10.1, 10.2],
+                "high": [10.5, 10.6, 10.7],
+                "low": [9.8, 9.9, 10.0],
+                "close": [10.0, 10.1, 10.2],
+                "volume": [1000, 1000, 1000],
+                "adjust_factor": [1.0, 1.1, 2.0],
+            }
+        )
+    )
+    assert bool(frame.iloc[1]["corporate_action"])
+    assert bool(frame.iloc[2]["adjustment_anomaly"])
+    checks = adjustment_quality_checks("dataset-1", frame)
+    continuity = [item for item in checks if item["check_name"] == "adjustment_continuity"][0]
+    assert continuity["severity"] == "warning"
+    assert continuity["details"]["adjustment_anomaly_count"] == 1
 
 
 def test_dataset_view_is_scoped_by_symbol_and_date(tmp_path):

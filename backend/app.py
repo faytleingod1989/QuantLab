@@ -14,6 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from .data import (
     SAMPLE_NAMES,
     DataSourceError,
+    adjustment_quality_checks,
     dataset_summary,
     extract_security_daily_status,
     extract_security_master,
@@ -264,6 +265,9 @@ def _persist_dataset(name: str, frame, source: str) -> dict:
         repository.replace_security_daily_status(
             existing["id"], extract_security_daily_status(existing["id"], frame, source)
         )
+        repository.replace_dataset_quality_checks(
+            existing["id"], adjustment_quality_checks(existing["id"], frame)
+        )
         return {**existing, "duplicate": True, "summary": summary}
     dataset_id = uuid4().hex
     dataset_directory = database_path.parent / "datasets"
@@ -281,6 +285,9 @@ def _persist_dataset(name: str, frame, source: str) -> dict:
     repository.upsert_securities(extract_security_master(frame, source))
     repository.replace_security_daily_status(
         dataset_id, extract_security_daily_status(dataset_id, frame, source)
+    )
+    repository.replace_dataset_quality_checks(
+        dataset_id, adjustment_quality_checks(dataset_id, frame)
     )
     return {**record, "duplicate": False, "summary": summary}
 
@@ -332,7 +339,22 @@ def preview_dataset(dataset_id: str) -> dict:
     except (OSError, ValueError) as error:
         logger.exception("dataset_read_failed dataset_id=%s", dataset_id)
         raise HTTPException(status_code=500, detail="数据集文件不可用") from error
-    return {"dataset": record, "summary": dataset_summary(frame)}
+    return {
+        "dataset": record,
+        "summary": dataset_summary(frame),
+        "quality_checks": repository.list_dataset_quality_checks(dataset_id),
+    }
+
+
+@app.get("/api/datasets/{dataset_id}/quality")
+def dataset_quality(dataset_id: str) -> dict:
+    record = repository.get_dataset(dataset_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="数据集不存在")
+    return {
+        "dataset": record,
+        "quality_checks": repository.list_dataset_quality_checks(dataset_id),
+    }
 
 
 @app.get("/api/projects")

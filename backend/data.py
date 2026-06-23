@@ -129,11 +129,51 @@ def prepare_market_frame(frame: pd.DataFrame) -> pd.DataFrame:
         current["suspended"] = current["volume"] <= 0
     else:
         current["suspended"] = current["suspended"].map(_to_bool)
+    adjusted_source = next(
+        (
+            column
+            for column in ("adjusted_close", "adj_close", "qfq_close", "hfq_close")
+            if column in current.columns
+        ),
+        None,
+    )
+    if "adjust_factor" in current.columns:
+        current["adjust_factor"] = pd.to_numeric(current["adjust_factor"], errors="coerce")
+    elif adjusted_source:
+        current["adjust_factor"] = pd.to_numeric(current[adjusted_source], errors="coerce") / current["close"]
+    else:
+        current["adjust_factor"] = 1.0
+    if current["adjust_factor"].isna().any() or (current["adjust_factor"] <= 0).any():
+        raise ValueError("数据包含非法复权因子")
+    if adjusted_source:
+        current["adjusted_close"] = pd.to_numeric(current[adjusted_source], errors="coerce")
+    else:
+        current["adjusted_close"] = current["close"] * current["adjust_factor"]
+    if current["adjusted_close"].isna().any() or (current["adjusted_close"] <= 0).any():
+        raise ValueError("数据包含非法复权收盘价")
+    previous_factor = current.groupby("symbol", sort=False)["adjust_factor"].shift(1)
+    factor_ratio = current["adjust_factor"] / previous_factor
+    current["corporate_action"] = (
+        previous_factor.notna() & ((factor_ratio - 1.0).abs() > 1e-6)
+    )
+    previous_adjusted_close = current.groupby("symbol", sort=False)["adjusted_close"].shift(1)
+    adjusted_return = current["adjusted_close"] / previous_adjusted_close - 1.0
+    current["adjustment_anomaly"] = (
+        previous_adjusted_close.notna()
+        & ~current["suspended"]
+        & (
+            (adjusted_return.abs() > 0.35)
+            | (previous_factor.notna() & ((factor_ratio - 1.0).abs() > 0.50))
+        )
+    )
     ordered = [
         "trade_date", "symbol", "name", "open", "high", "low", "close",
         "prev_close", "volume", "amount", "limit_up", "limit_down", "suspended",
+        "adjust_factor", "adjusted_close", "corporate_action", "adjustment_anomaly",
     ]
-    return current[ordered].sort_values(["trade_date", "symbol"]).reset_index(drop=True)
+    return current[ordered].round({"adjust_factor": 8, "adjusted_close": 4}).sort_values(
+        ["trade_date", "symbol"]
+    ).reset_index(drop=True)
 
 
 def _to_bool(value) -> bool:
@@ -219,10 +259,78 @@ def dataset_summary(frame: pd.DataFrame) -> dict:
         "start_date": str(current["trade_date"].min().date()),
         "end_date": str(current["trade_date"].max().date()),
         "symbols": sorted(current["symbol"].astype(str).unique().tolist()),
+        "quality": adjustment_quality_summary(current),
         "preview": current.head(20).assign(
             trade_date=lambda value: value["trade_date"].dt.strftime("%Y-%m-%d")
         ).to_dict(orient="records"),
     }
+
+
+def adjustment_quality_summary(frame: pd.DataFrame) -> dict:
+    current = prepare_market_frame(frame)
+    factor_coverage = float(current["adjust_factor"].notna().mean()) if len(current) else 0.0
+    anomaly_symbols = sorted(
+        current.loc[current["adjustment_anomaly"], "symbol"].astype(str).unique().tolist()
+    )
+    return {
+        "price_mode": "unadjusted_execution_with_adjustment_metadata",
+        "factor_coverage": round(factor_coverage, 4),
+        "corporate_action_count": int(current["corporate_action"].sum()),
+        "adjustment_anomaly_count": int(current["adjustment_anomaly"].sum()),
+        "symbols_with_adjustment_anomalies": anomaly_symbols,
+    }
+
+
+def adjustment_quality_checks(dataset_id: str, frame: pd.DataFrame) -> list[dict]:
+    current = prepare_market_frame(frame)
+    checks = [
+        {
+            "dataset_id": dataset_id,
+            "check_name": "adjustment_factor_coverage",
+            "severity": "info",
+            "message": "复权因子字段已标准化；缺失来源使用 1.0 作为不复权基准。",
+            "details": {
+                "factor_coverage": round(float(current["adjust_factor"].notna().mean()), 4),
+                "price_mode": "撮合使用未复权 OHLC，复权字段仅用于质量校验与后续信号口径扩展。",
+            },
+        }
+    ]
+    corporate_action_count = int(current["corporate_action"].sum())
+    checks.append(
+        {
+            "dataset_id": dataset_id,
+            "check_name": "corporate_action_markers",
+            "severity": "info",
+            "message": f"识别到 {corporate_action_count} 条复权因子变化记录。",
+            "details": {"corporate_action_count": corporate_action_count},
+        }
+    )
+    anomalies = current[current["adjustment_anomaly"]]
+    if anomalies.empty:
+        checks.append(
+            {
+                "dataset_id": dataset_id,
+                "check_name": "adjustment_continuity",
+                "severity": "pass",
+                "message": "复权连续性检查未发现异常跳变。",
+                "details": {"adjustment_anomaly_count": 0},
+            }
+        )
+    else:
+        checks.append(
+            {
+                "dataset_id": dataset_id,
+                "check_name": "adjustment_continuity",
+                "severity": "warning",
+                "message": f"复权连续性检查发现 {len(anomalies)} 条异常跳变。",
+                "details": {
+                    "adjustment_anomaly_count": int(len(anomalies)),
+                    "symbols": sorted(anomalies["symbol"].astype(str).unique().tolist()),
+                    "dates": anomalies["trade_date"].dt.strftime("%Y-%m-%d").head(20).tolist(),
+                },
+            }
+        )
+    return checks
 
 
 def extract_security_master(frame: pd.DataFrame, source: str) -> list[dict]:

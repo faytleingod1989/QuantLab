@@ -66,6 +66,7 @@ class BacktestTaskManager:
                 dataset = self.repository.get_dataset(request.dataset_id)
                 if not dataset:
                     raise ValueError("数据集不存在")
+                quality_checks = self.repository.list_dataset_quality_checks(request.dataset_id)
                 data, benchmark = load_dataset_view(
                     dataset["path"], request.symbols, request.start_date,
                     request.end_date, request.benchmark,
@@ -77,6 +78,7 @@ class BacktestTaskManager:
                 benchmark = sample_daily(request.benchmark)
                 benchmark_is_demo = True
                 data_source = "demo"
+                quality_checks = []
             result = run_backtest(
                 data,
                 request,
@@ -87,6 +89,10 @@ class BacktestTaskManager:
             )
             result["task_id"] = run_id
             result["data_source"] = data_source
+            result["data_quality"] = {
+                "price_mode": "unadjusted_execution",
+                "quality_checks": quality_checks,
+            }
             self.repository.complete_run(run_id, result)
             logger.info("backtest_completed task_id=%s", run_id)
         except BacktestCancelled:

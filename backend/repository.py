@@ -141,6 +141,19 @@ class BacktestRepository:
                 ON security_daily_status(symbol, trade_date)
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS dataset_quality_checks (
+                    dataset_id TEXT NOT NULL,
+                    check_name TEXT NOT NULL,
+                    severity TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    details_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(dataset_id, check_name)
+                )
+                """
+            )
 
     @staticmethod
     def _ensure_column(connection: sqlite3.Connection, table: str, column: str, kind: str) -> None:
@@ -303,6 +316,57 @@ class BacktestRepository:
                 "SELECT * FROM datasets ORDER BY created_at DESC"
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def replace_dataset_quality_checks(self, dataset_id: str, checks: list[dict[str, Any]]) -> None:
+        now = utc_now()
+        with self._connect() as connection:
+            connection.execute(
+                "DELETE FROM dataset_quality_checks WHERE dataset_id = ?", (dataset_id,)
+            )
+            if not checks:
+                return
+            connection.executemany(
+                """
+                INSERT OR REPLACE INTO dataset_quality_checks(
+                    dataset_id, check_name, severity, message, details_json, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                [
+                    (
+                        check["dataset_id"],
+                        check["check_name"],
+                        check["severity"],
+                        check["message"],
+                        json.dumps(check.get("details", {}), ensure_ascii=False),
+                        now,
+                    )
+                    for check in checks
+                ],
+            )
+
+    def list_dataset_quality_checks(self, dataset_id: str) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT * FROM dataset_quality_checks
+                WHERE dataset_id = ?
+                ORDER BY
+                    CASE severity
+                        WHEN 'error' THEN 1
+                        WHEN 'warning' THEN 2
+                        WHEN 'pass' THEN 3
+                        ELSE 4
+                    END,
+                    check_name
+                """,
+                (dataset_id,),
+            ).fetchall()
+        results = []
+        for row in rows:
+            item = dict(row)
+            item["details"] = json.loads(item.pop("details_json"))
+            results.append(item)
+        return results
 
     def upsert_securities(self, records: list[dict[str, Any]]) -> None:
         if not records:
