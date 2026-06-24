@@ -36,6 +36,7 @@ function App() {
   const [source, setSource] = useState(null);
   const [notice, setNotice] = useState("");
   const [datasets, setDatasets] = useState([]);
+  const [datasetQuality, setDatasetQuality] = useState(null);
   const [importing, setImporting] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [strategyRecord, setStrategyRecord] = useState(null);
@@ -200,6 +201,7 @@ function App() {
   const selectDataset = async (dataset) => {
     if (!dataset) {
       applyDataset(null);
+      setDatasetQuality(null);
       return;
     }
     try {
@@ -207,6 +209,7 @@ function App() {
       if (!response.ok) throw new Error("无法读取数据集");
       const preview = await response.json();
       applyDataset(dataset, preview.summary.symbols);
+      setDatasetQuality(preview);
     } catch (error) {
       setNotice(`选择失败：${errorMessage(error)}`);
     }
@@ -407,6 +410,7 @@ function App() {
           securities={securities}
           source={source}
           datasets={datasets}
+          datasetQuality={datasetQuality}
           onImport={importCsv}
           onImportIndustryHistory={importIndustryHistory}
           importing={importing}

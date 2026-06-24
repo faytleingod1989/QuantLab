@@ -220,6 +220,7 @@ export function DataDrawer({
   securities,
   source,
   datasets,
+  datasetQuality,
   onImport,
   onImportIndustryHistory,
   importing,
@@ -307,7 +308,18 @@ export function DataDrawer({
             ))}
             </div>
           </>
-        ) : null}
+        ) : (
+          <div className="quality-panel">
+            <b>数据质量检查</b>
+            {(datasetQuality?.quality_checks || []).length ? (
+              datasetQuality.quality_checks.map((check) => (
+                <span key={check.check_name} className={check.severity}>{check.check_name} · {check.severity}<small>{check.message}</small></span>
+              ))
+            ) : (
+              <span>暂无质量检查记录</span>
+            )}
+          </div>
+        )}
         <div className="modal-actions">
           <span className="selection-count">{settings.dataset_id ? "已选择固定数据快照" : `已选择 ${settings.symbols.length} 只股票`}</span>
           <button className="primary" disabled={!settings.symbols.length} onClick={close}>确认数据源</button>
