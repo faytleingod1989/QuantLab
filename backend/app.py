@@ -373,17 +373,17 @@ def _persist_dataset(name: str, frame, source: str) -> dict:
     frame = _enrich_frame_with_security_master(frame)
     normalized = frame.to_csv(index=False, date_format="%Y-%m-%d").encode("utf-8")
     fingerprint = hashlib.sha256(normalized).hexdigest()
-    summary = dataset_summary(frame)
+    summary = dataset_summary(frame, prepared=True)
     existing = repository.find_dataset_by_fingerprint(fingerprint)
     if existing:
-        security_master = extract_security_master(frame, source)
+        security_master = extract_security_master(frame, source, prepared=True)
         repository.upsert_securities(security_master)
         repository.upsert_industry_history(security_master)
         repository.replace_security_daily_status(
-            existing["id"], extract_security_daily_status(existing["id"], frame, source)
+            existing["id"], extract_security_daily_status(existing["id"], frame, source, prepared=True)
         )
         repository.replace_dataset_quality_checks(
-            existing["id"], adjustment_quality_checks(existing["id"], frame)
+            existing["id"], adjustment_quality_checks(existing["id"], frame, prepared=True)
         )
         return {**existing, "duplicate": True, "summary": summary}
     dataset_id = uuid4().hex
@@ -399,14 +399,14 @@ def _persist_dataset(name: str, frame, source: str) -> dict:
             "end_date": summary["end_date"], "source": source,
         }
     )
-    security_master = extract_security_master(frame, source)
+    security_master = extract_security_master(frame, source, prepared=True)
     repository.upsert_securities(security_master)
     repository.upsert_industry_history(security_master)
     repository.replace_security_daily_status(
-        dataset_id, extract_security_daily_status(dataset_id, frame, source)
+        dataset_id, extract_security_daily_status(dataset_id, frame, source, prepared=True)
     )
     repository.replace_dataset_quality_checks(
-        dataset_id, adjustment_quality_checks(dataset_id, frame)
+        dataset_id, adjustment_quality_checks(dataset_id, frame, prepared=True)
     )
     return {**record, "duplicate": False, "summary": summary}
 

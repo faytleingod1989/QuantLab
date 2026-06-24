@@ -367,8 +367,8 @@ def filter_to_trading_calendar(
     return filtered.reset_index(drop=True)
 
 
-def dataset_summary(frame: pd.DataFrame) -> dict:
-    current = prepare_market_frame(frame)
+def dataset_summary(frame: pd.DataFrame, *, prepared: bool = False) -> dict:
+    current = frame.copy() if prepared else prepare_market_frame(frame)
     return {
         "row_count": int(len(current)),
         "symbol_count": int(current["symbol"].nunique()),
@@ -383,8 +383,8 @@ def dataset_summary(frame: pd.DataFrame) -> dict:
     }
 
 
-def adjustment_quality_summary(frame: pd.DataFrame) -> dict:
-    current = prepare_market_frame(frame)
+def adjustment_quality_summary(frame: pd.DataFrame, *, prepared: bool = False) -> dict:
+    current = frame.copy() if prepared else prepare_market_frame(frame)
     factor_coverage = float(current["adjust_factor"].notna().mean()) if len(current) else 0.0
     anomaly_symbols = sorted(
         current.loc[current["adjustment_anomaly"], "symbol"].astype(str).unique().tolist()
@@ -398,8 +398,8 @@ def adjustment_quality_summary(frame: pd.DataFrame) -> dict:
     }
 
 
-def adjustment_quality_checks(dataset_id: str, frame: pd.DataFrame) -> list[dict]:
-    current = prepare_market_frame(frame)
+def adjustment_quality_checks(dataset_id: str, frame: pd.DataFrame, *, prepared: bool = False) -> list[dict]:
+    current = frame.copy() if prepared else prepare_market_frame(frame)
     checks = [
         {
             "dataset_id": dataset_id,
@@ -569,8 +569,8 @@ def fetch_akshare_security_master(client=None) -> list[dict]:
     return sorted(records.values(), key=lambda item: (item["exchange"], item["symbol"]))
 
 
-def extract_security_master(frame: pd.DataFrame, source: str) -> list[dict]:
-    current = prepare_market_frame(frame)
+def extract_security_master(frame: pd.DataFrame, source: str, *, prepared: bool = False) -> list[dict]:
+    current = frame.copy() if prepared else prepare_market_frame(frame)
     records = []
     for symbol, group in current.groupby("symbol", sort=True):
         ordered = group.sort_values("trade_date")
@@ -593,9 +593,14 @@ def extract_security_master(frame: pd.DataFrame, source: str) -> list[dict]:
 
 
 def extract_security_daily_status(
-    dataset_id: str, frame: pd.DataFrame, source: str, long_suspension_days: int = 20
+    dataset_id: str,
+    frame: pd.DataFrame,
+    source: str,
+    long_suspension_days: int = 20,
+    *,
+    prepared: bool = False,
 ) -> list[dict]:
-    current = prepare_market_frame(frame)
+    current = frame.copy() if prepared else prepare_market_frame(frame)
     records = []
     for _, group in current.groupby("symbol", sort=True):
         streak = 0
