@@ -4,29 +4,29 @@ import { navItems, workflowSteps } from "../appConfig";
 import { formatPercent } from "../formatters";
 import { Metric } from "./common";
 
-export function Sidebar({ openNav, openSettings, serviceOnline }) {
+export function Sidebar({ activeNav, openNav, openSettings, serviceOnline }) {
   return (
     <aside className="sidebar">
       <div className="brand"><span>QuantLab</span><small>本地量化研究平台</small></div>
       <nav>
         {navItems.map(([label, Icon]) => (
-          <button key={label} className={label === "回测中心" ? "active" : ""} onClick={() => openNav(label)}>
+          <button key={label} className={activeNav === label ? "active" : ""} onClick={() => openNav(label)}>
             <Icon size={20} /><span>{label}</span>
           </button>
         ))}
       </nav>
       <div className="sidebar-bottom">
         <span><i className={serviceOnline === false ? "offline-dot" : ""} />{serviceOnline === false ? "本地服务未连接" : "本地服务运行中"}</span>
-        <button onClick={openSettings}><GearSix size={20} /><span>系统设置</span></button>
+        <button className={activeNav === "系统设置" ? "active" : ""} onClick={openSettings}><GearSix size={20} /><span>系统设置</span></button>
       </div>
     </aside>
   );
 }
 
-export function Topbar({ settings, setSettings, onExportReport, canExportReport }) {
+export function Topbar({ title = "数据驾驶舱", subtitle = "结果总览与分析", settings, setSettings, onExportReport, canExportReport }) {
   return (
     <header className="topbar">
-      <div><h1>数据驾驶舱</h1><p>结果总览与分析</p></div>
+      <div><h1>{title}</h1><p>{subtitle}</p></div>
       <div className="top-actions">
         <label>
           <input type="date" value={settings.start_date} onChange={(event) => setSettings((current) => ({ ...current, start_date: event.target.value }))} />
