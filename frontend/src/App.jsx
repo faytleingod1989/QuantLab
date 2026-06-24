@@ -39,6 +39,7 @@ function App() {
   const [datasetQuality, setDatasetQuality] = useState(null);
   const [importing, setImporting] = useState(false);
   const [syncing, setSyncing] = useState(false);
+  const [syncingAll, setSyncingAll] = useState(false);
   const [strategyRecord, setStrategyRecord] = useState(null);
   const [savingStrategy, setSavingStrategy] = useState(false);
   const [booting, setBooting] = useState(true);
@@ -174,31 +175,58 @@ function App() {
     }
   };
 
-  const syncAkshare = async () => {
-    setSyncing(true);
+  const syncAkshare = async (scope = "selected") => {
+    const allMarket = scope === "all";
+    allMarket ? setSyncingAll(true) : setSyncing(true);
     setNotice("");
     try {
-      const response = await fetch(`${API}/datasets/akshare`, {
+      const response = await fetch(`${API}/datasets/akshare${allMarket ? "/all" : ""}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          name: `AkShare ${settings.start_date} 至 ${settings.end_date}`,
-          symbols: settings.symbols,
-          start_date: settings.start_date,
-          end_date: settings.end_date,
-          benchmark: settings.benchmark,
-        }),
+        body: JSON.stringify(
+          allMarket
+            ? {
+                name: `AkShare 沪深全A ${settings.start_date} 至 ${settings.end_date}`,
+                start_date: settings.start_date,
+                end_date: settings.end_date,
+                benchmark: settings.benchmark,
+              }
+            : {
+                name: `AkShare ${settings.start_date} 至 ${settings.end_date}`,
+                symbols: settings.symbols,
+                start_date: settings.start_date,
+                end_date: settings.end_date,
+                benchmark: settings.benchmark,
+              }
+        ),
       });
       if (!response.ok) throw new Error((await response.json()).detail || "AkShare 同步失败");
       const dataset = await response.json();
       setDatasets((current) => [dataset, ...current.filter((item) => item.id !== dataset.id)]);
       applyDataset(dataset, dataset.summary.symbols);
       setDatasetQuality({ dataset, summary: dataset.summary, quality_checks: dataset.quality_checks || [] });
-      setNotice(dataset.duplicate ? "真实行情快照已存在并已选中" : `真实行情已同步：${dataset.summary.row_count} 行`);
+      setNotice(dataset.duplicate ? "真实行情快照已存在并已选中" : `真实行情已同步：${dataset.summary.symbol_count} 标的，${dataset.summary.row_count} 行`);
     } catch (error) {
       setNotice(`同步失败：${errorMessage(error)}`);
     } finally {
-      setSyncing(false);
+      allMarket ? setSyncingAll(false) : setSyncing(false);
+    }
+  };
+
+  const deleteDataset = async (dataset) => {
+    if (!dataset) return;
+    if (!window.confirm(`删除数据集「${dataset.name}」？本地快照文件也会被删除。`)) return;
+    try {
+      const response = await fetch(`${API}/datasets/${dataset.id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error((await response.json()).detail || "删除失败");
+      setDatasets((current) => current.filter((item) => item.id !== dataset.id));
+      if (settings.dataset_id === dataset.id) {
+        applyDataset(null);
+        setDatasetQuality(null);
+      }
+      setNotice(`数据集已删除：${dataset.name}`);
+    } catch (error) {
+      setNotice(`删除失败：${errorMessage(error)}`);
     }
   };
 
@@ -418,9 +446,12 @@ function App() {
           onImport={importCsv}
           onImportIndustryHistory={importIndustryHistory}
           importing={importing}
-          onSync={syncAkshare}
+          onSync={() => syncAkshare("selected")}
+          onSyncAll={() => syncAkshare("all")}
           syncing={syncing}
+          syncingAll={syncingAll}
           onSelectDataset={selectDataset}
+          onDeleteDataset={deleteDataset}
           close={() => setDrawer("settings")}
         />
       ) : null}

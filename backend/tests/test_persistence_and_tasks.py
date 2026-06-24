@@ -176,6 +176,46 @@ def test_industry_history_import_builds_missing_security_master(monkeypatch):
     ]
 
 
+def test_all_market_sync_symbol_pool_uses_active_sh_sz_only(monkeypatch):
+    from backend import app as app_module
+
+    records = [
+        {
+            "symbol": "600519.SH",
+            "exchange": "SH",
+            "status": "active",
+            "industry": "食品饮料",
+            "board": "沪市主板",
+        },
+        {
+            "symbol": "300750.SZ",
+            "exchange": "SZ",
+            "status": "active",
+            "industry": "电力设备",
+            "board": "创业板",
+        },
+        {"symbol": "920000.BJ", "exchange": "BJ", "status": "active"},
+        {"symbol": "600001.SH", "exchange": "SH", "status": "delisted"},
+    ]
+
+    class FakeRepository:
+        def list_securities(self, include_inactive=False):
+            return []
+
+        def upsert_securities(self, synced_records):
+            self.synced_records = synced_records
+
+        def upsert_industry_history(self, synced_records):
+            self.industry_records = synced_records
+
+    fake_repository = FakeRepository()
+    monkeypatch.setattr(app_module, "repository", fake_repository)
+    monkeypatch.setattr(app_module, "fetch_akshare_security_master", lambda: records)
+
+    assert app_module._active_sh_sz_symbols() == ["300750.SZ", "600519.SH"]
+    assert fake_repository.synced_records == records
+
+
 def test_real_security_master_overrides_demo_seed_listing_date(tmp_path):
     repository = BacktestRepository(tmp_path / "quantlab.db")
     repository.upsert_securities(
@@ -270,6 +310,38 @@ def test_repository_persists_dataset_quality_checks(tmp_path):
     checks = repository.list_dataset_quality_checks("dataset-1")
     assert checks[0]["severity"] == "warning"
     assert checks[0]["details"]["symbols"] == ["600519.SH"]
+
+
+def test_repository_deletes_dataset_and_related_rows(tmp_path):
+    repository = BacktestRepository(tmp_path / "quantlab.db")
+    frame = sample_daily("600519.SH", "2024-01-02", "2024-01-05")
+    repository.create_dataset(
+        {
+            "id": "dataset-1",
+            "name": "snapshot",
+            "path": str(tmp_path / "snapshot.csv"),
+            "fingerprint": "sha",
+            "row_count": len(frame),
+            "symbol_count": 1,
+            "start_date": "2024-01-02",
+            "end_date": "2024-01-05",
+            "source": "csv",
+        }
+    )
+    repository.replace_dataset_quality_checks(
+        "dataset-1",
+        [{"dataset_id": "dataset-1", "check_name": "x", "severity": "pass", "message": "ok"}],
+    )
+    repository.replace_security_daily_status(
+        "dataset-1", extract_security_daily_status("dataset-1", frame, "csv")
+    )
+
+    deleted = repository.delete_dataset("dataset-1")
+
+    assert deleted["id"] == "dataset-1"
+    assert repository.get_dataset("dataset-1") is None
+    assert repository.list_dataset_quality_checks("dataset-1") == []
+    assert repository.list_security_daily_status("600519.SH") == []
 
 
 def test_security_lifecycle_validation_rejects_pre_listing_and_delisted(tmp_path):

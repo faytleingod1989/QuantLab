@@ -9,6 +9,7 @@ import {
   Play,
   Pulse,
   SlidersHorizontal,
+  Trash,
   X,
 } from "@phosphor-icons/react";
 
@@ -242,8 +243,11 @@ export function DataDrawer({
   onImportIndustryHistory,
   importing,
   onSync,
+  onSyncAll,
   syncing,
+  syncingAll,
   onSelectDataset,
+  onDeleteDataset,
   close,
 }) {
   const [query, setQuery] = useState("");
@@ -277,7 +281,8 @@ export function DataDrawer({
             <p>{source?.message || "正在检查本地数据源"}</p>
           </div>
           <div className="data-actions">
-            <button className="ghost" onClick={onSync} disabled={!source?.akshare_available || syncing}>{syncing ? "同步中…" : "同步 AkShare"}</button>
+            <button className="ghost" onClick={onSync} disabled={!source?.akshare_available || syncing || syncingAll}>{syncing ? "同步中…" : "同步所选"}</button>
+            <button className="ghost" onClick={onSyncAll} disabled={!source?.akshare_available || syncing || syncingAll}>{syncingAll ? "全A同步中…" : "同步沪深全A"}</button>
             <label className="csv-upload">
               <input type="file" accept=".csv,text/csv" onChange={onImport} disabled={importing} />
               {importing ? "正在校验…" : "导入 CSV"}
@@ -295,11 +300,16 @@ export function DataDrawer({
             <span>离线生成 · 5 只示例股票</span>
           </button>
           {datasets.map((dataset) => (
-            <button key={dataset.id} className={settings.dataset_id === dataset.id ? "selected" : ""} onClick={() => onSelectDataset(dataset)}>
-              <b>{dataset.name}</b>
-              <span>{dataset.source === "akshare" ? "AkShare" : "CSV"} · {dataset.symbol_count} 标的 · {dataset.row_count} 行</span>
-              <small>{dataset.start_date} — {dataset.end_date}</small>
-            </button>
+            <div key={dataset.id} className={`dataset-card ${settings.dataset_id === dataset.id ? "selected" : ""}`}>
+              <button className="dataset-select" onClick={() => onSelectDataset(dataset)}>
+                <b>{dataset.name}</b>
+                <span>{dataset.source === "akshare" || dataset.source === "akshare_all" ? "AkShare" : "CSV"} · {dataset.symbol_count} 标的 · {dataset.row_count} 行</span>
+                <small>{dataset.start_date} — {dataset.end_date}</small>
+              </button>
+              <button className="dataset-delete" onClick={() => onDeleteDataset(dataset)} aria-label={`删除 ${dataset.name}`} title="删除快照">
+                <Trash size={14} />
+              </button>
+            </div>
           ))}
         </div>
         {!settings.dataset_id ? (

@@ -35,6 +35,7 @@ from .data import (
 from .engine import run_backtest
 from .models import (
     BacktestRequest,
+    AkshareAllDatasetRequest,
     AkshareDatasetRequest,
     CsvDatasetRequest,
     IndustryHistoryCsvRequest,
@@ -390,6 +391,21 @@ def list_datasets() -> list[dict]:
     return repository.list_datasets()
 
 
+def _active_sh_sz_symbols() -> list[str]:
+    records = repository.list_securities(include_inactive=True)
+    if len(records) < 100:
+        records = fetch_akshare_security_master()
+        repository.upsert_securities(records)
+        repository.upsert_industry_history(records)
+    symbols = [
+        record["symbol"]
+        for record in records
+        if record.get("exchange") in {"SH", "SZ"}
+        and record.get("status", "active") != "delisted"
+    ]
+    return sorted(set(symbols))
+
+
 def _enrich_frame_with_security_master(frame) -> object:
     current = frame.copy()
     current["symbol"] = current["symbol"].map(normalize_symbol)
@@ -472,6 +488,37 @@ async def sync_akshare_dataset(payload: AkshareDatasetRequest) -> dict:
         logger.warning("akshare_sync_failed error=%s", error)
         raise HTTPException(status_code=502, detail=str(error)) from error
     return await run_in_threadpool(_persist_dataset, payload.name, frame, "akshare")
+
+
+@app.post("/api/datasets/akshare/all", status_code=201)
+async def sync_all_akshare_dataset(payload: AkshareAllDatasetRequest) -> dict:
+    try:
+        symbols = await run_in_threadpool(_active_sh_sz_symbols)
+        if not symbols:
+            raise ValueError("没有可同步的沪深 A 股证券主数据")
+        frame = await run_in_threadpool(
+            fetch_akshare_dataset,
+            symbols, payload.start_date, payload.end_date, payload.benchmark
+        )
+    except (DataSourceError, ValueError) as error:
+        logger.warning("akshare_all_sync_failed error=%s", error)
+        raise HTTPException(status_code=502, detail=str(error)) from error
+    return await run_in_threadpool(_persist_dataset, payload.name, frame, "akshare_all")
+
+
+@app.delete("/api/datasets/{dataset_id}")
+def delete_dataset(dataset_id: str) -> dict:
+    record = repository.delete_dataset(dataset_id)
+    if not record:
+        raise HTTPException(status_code=404, detail="数据集不存在")
+    try:
+        dataset_path = Path(record["path"]).resolve()
+        datasets_root = (database_path.parent / "datasets").resolve()
+        if dataset_path.is_file() and datasets_root in dataset_path.parents:
+            dataset_path.unlink()
+    except OSError as error:
+        logger.warning("dataset_file_delete_failed dataset_id=%s error=%s", dataset_id, error)
+    return {"id": dataset_id, "deleted": True}
 
 
 @app.get("/api/data/calendar")

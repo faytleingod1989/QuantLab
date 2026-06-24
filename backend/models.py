@@ -130,6 +130,24 @@ class AkshareDatasetRequest(BaseModel):
         return self
 
 
+class AkshareAllDatasetRequest(BaseModel):
+    name: str = Field(default="AkShare 沪深全A日线", min_length=1, max_length=100)
+    start_date: str
+    end_date: str
+    benchmark: str = "000300.SH"
+
+    @model_validator(mode="after")
+    def validate_dates(self):
+        try:
+            start = date.fromisoformat(self.start_date)
+            end = date.fromisoformat(self.end_date)
+        except ValueError as error:
+            raise ValueError("日期格式必须为 YYYY-MM-DD") from error
+        if start >= end:
+            raise ValueError("结束日期必须晚于开始日期")
+        return self
+
+
 class ProjectCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     description: str = Field(default="", max_length=500)

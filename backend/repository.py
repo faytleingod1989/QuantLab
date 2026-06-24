@@ -393,6 +393,23 @@ class BacktestRepository:
             ).fetchall()
         return [dict(row) for row in rows]
 
+    def delete_dataset(self, dataset_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM datasets WHERE id = ?", (dataset_id,)
+            ).fetchone()
+            if not row:
+                return None
+            record = dict(row)
+            connection.execute(
+                "DELETE FROM dataset_quality_checks WHERE dataset_id = ?", (dataset_id,)
+            )
+            connection.execute(
+                "DELETE FROM security_daily_status WHERE dataset_id = ?", (dataset_id,)
+            )
+            connection.execute("DELETE FROM datasets WHERE id = ?", (dataset_id,))
+        return record
+
     def replace_dataset_quality_checks(self, dataset_id: str, checks: list[dict[str, Any]]) -> None:
         now = utc_now()
         with self._connect() as connection:
