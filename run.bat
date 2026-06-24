@@ -1,8 +1,7 @@
 @echo off
-chcp 65001 >nul
 setlocal
 
-title QuantLab - A股量化回测平台
+title QuantLab Launcher
 
 set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
@@ -11,94 +10,99 @@ set "FRONTEND_DIR=%ROOT%\frontend"
 
 echo.
 echo ================================================
-echo   QuantLab v0.4.0 正在启动
-echo   项目目录: %ROOT%
+echo   QuantLab launcher
+echo   Project: %ROOT%
 echo ================================================
 echo.
 
 if not exist "%BACKEND_DIR%\app.py" (
-    echo [错误] 找不到后端目录或入口文件:
-    echo        %BACKEND_DIR%\app.py
-    echo 请把 run.bat 放在项目根目录后再运行。
+    echo [ERROR] backend entry not found:
+    echo         %BACKEND_DIR%\app.py
+    echo Put run.bat in the project root folder and try again.
     pause
     exit /b 1
 )
 
 if not exist "%FRONTEND_DIR%\package.json" (
-    echo [错误] 找不到前端目录或 package.json:
-    echo        %FRONTEND_DIR%\package.json
-    echo 请把 run.bat 放在项目根目录后再运行。
+    echo [ERROR] frontend package.json not found:
+    echo         %FRONTEND_DIR%\package.json
+    echo Put run.bat in the project root folder and try again.
     pause
     exit /b 1
 )
 
 set "PYTHON="
 for %%C in (python python3 py) do (
-    where %%C >nul 2>&1
+    where %%C >nul 2>nul
     if not errorlevel 1 (
         set "PYTHON=%%C"
         goto :found_python
     )
 )
-echo [错误] 未找到 Python，请安装 Python 3.12+ 并添加到 PATH。
+echo [ERROR] Python was not found. Install Python 3.12+ and add it to PATH.
 pause
 exit /b 1
 
 :found_python
-echo [检查] Python: %PYTHON%
+echo [OK] Python command: %PYTHON%
 %PYTHON% --version
 
 set "NPM="
 for %%C in (npm.cmd npm) do (
-    where %%C >nul 2>&1
+    where %%C >nul 2>nul
     if not errorlevel 1 (
         set "NPM=%%C"
         goto :found_npm
     )
 )
-echo [错误] 未找到 Node.js/npm，请安装 Node.js 20+ 并添加到 PATH。
+echo [ERROR] npm was not found. Install Node.js 20+ and add it to PATH.
 pause
 exit /b 1
 
 :found_npm
-echo [检查] npm: %NPM%
+echo [OK] npm command: %NPM%
 call %NPM% --version
 
 echo.
-echo [步骤 1/4] 检查后端 Python 依赖...
+echo [1/4] Checking backend dependencies...
 if exist "%BACKEND_DIR%\requirements.txt" (
     %PYTHON% -m pip install -q -r "%BACKEND_DIR%\requirements.txt"
     if errorlevel 1 (
-        echo [警告] pip install 失败，将继续尝试启动；如启动失败请手动检查依赖。
+        echo [WARN] pip install failed. The launcher will continue.
     ) else (
-        echo [完成] 后端依赖已就绪。
+        echo [OK] Backend dependencies are ready.
     )
 ) else (
-    echo [跳过] 未找到 backend\requirements.txt。
+    echo [SKIP] backend\requirements.txt not found.
 )
 
 echo.
-echo [步骤 2/4] 检查前端 Node.js 依赖...
+echo [2/4] Checking frontend dependencies...
 if not exist "%FRONTEND_DIR%\node_modules" (
-    echo [安装] 首次启动需要执行 npm install，请稍候...
+    echo [INFO] Installing frontend dependencies. This may take a while...
     pushd "%FRONTEND_DIR%"
     call %NPM% install
     if errorlevel 1 (
         popd
-        echo [错误] npm install 失败。
+        echo [ERROR] npm install failed.
         pause
         exit /b 1
     )
     popd
 ) else (
-    echo [完成] 前端依赖已就绪。
+    echo [OK] Frontend dependencies are ready.
 )
 
 echo.
-echo [步骤 3/4] 启动后端 API 服务: http://127.0.0.1:8000
-start "QuantLab-Backend" /MIN cmd /k "cd /d ""%ROOT%"" && %PYTHON% -m uvicorn backend.app:app --host 127.0.0.1 --port 8000"
+echo [3/4] Starting backend API: http://127.0.0.1:8000
+%PYTHON% -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=1)" >nul 2>nul
+if errorlevel 1 (
+    start "QuantLab-Backend" /MIN /D "%ROOT%" cmd /k "%PYTHON% -m uvicorn backend.app:app --host 127.0.0.1 --port 8000"
+) else (
+    echo [OK] Backend is already running.
+)
 
-echo [等待] 后端健康检查...
+echo [WAIT] Backend health check...
 set "BACKEND_READY=0"
 for /L %%i in (1,1,30) do (
     %PYTHON% -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=1)" >nul 2>nul
@@ -108,33 +112,43 @@ for /L %%i in (1,1,30) do (
     )
     timeout /t 1 /nobreak >nul
 )
-echo [警告] 后端启动超时，将继续启动前端；请检查 QuantLab-Backend 窗口日志。
+echo [WARN] Backend did not become ready in time. Check the QuantLab-Backend window.
 
 :backend_ready
-if "%BACKEND_READY%"=="1" echo [完成] 后端 API 已就绪。
+if "%BACKEND_READY%"=="1" echo [OK] Backend is ready.
 
 echo.
-echo [步骤 4/4] 启动前端开发服务: http://127.0.0.1:5173
-start "QuantLab-Frontend" /MIN cmd /k "cd /d ""%FRONTEND_DIR%"" && %NPM% run dev"
+echo [4/4] Starting frontend app: http://127.0.0.1:5173
+%PYTHON% -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5173', timeout=1)" >nul 2>nul
+if errorlevel 1 (
+    start "QuantLab-Frontend" /MIN /D "%FRONTEND_DIR%" cmd /k "call %NPM% run dev"
+) else (
+    echo [OK] Frontend is already running.
+)
 
-echo [等待] 前端服务...
-for /L %%i in (1,1,20) do (
+echo [WAIT] Frontend health check...
+set "FRONTEND_READY=0"
+for /L %%i in (1,1,30) do (
     %PYTHON% -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5173', timeout=1)" >nul 2>nul
-    if not errorlevel 1 goto :frontend_ready
+    if not errorlevel 1 (
+        set "FRONTEND_READY=1"
+        goto :frontend_ready
+    )
     timeout /t 1 /nobreak >nul
 )
-echo [警告] 前端启动可能仍在进行中，请稍后打开浏览器。
+echo [WARN] Frontend did not become ready in time. Check the QuantLab-Frontend window.
 
 :frontend_ready
+if "%FRONTEND_READY%"=="1" echo [OK] Frontend is ready.
+
 echo.
 echo ================================================
-echo   QuantLab 已启动
-echo   Web 界面: http://127.0.0.1:5173
-echo   API 文档: http://127.0.0.1:8000/docs
-echo   停止服务: 运行 stop.bat
+echo   QuantLab is ready
+echo   Web:  http://127.0.0.1:5173
+echo   API:  http://127.0.0.1:8000/docs
 echo ================================================
 echo.
 
-start "" http://127.0.0.1:5173
+start "" "http://127.0.0.1:5173"
 pause
 endlocal
