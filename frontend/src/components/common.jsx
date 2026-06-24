@@ -33,6 +33,7 @@ export function SettingRow({ label, children }) {
 }
 
 export function RateInput({ label, value, onChange, note }) {
+  const numericValue = Number.isFinite(Number(value)) ? Number(value) : 0;
   return (
     <SettingRow label={label}>
       <div className="rate-control">
@@ -40,7 +41,7 @@ export function RateInput({ label, value, onChange, note }) {
           <input
             type="number"
             step="0.001"
-            value={(value * 100).toFixed(3)}
+            value={(numericValue * 100).toFixed(3)}
             onChange={(event) => onChange(Number(event.target.value) / 100)}
           />
           <span>%</span>

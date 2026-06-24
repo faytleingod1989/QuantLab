@@ -237,6 +237,38 @@ def test_stop_loss_exits_position_before_signal_sell():
     assert any(trade["side"] == "卖出" and trade["reason"] == "止损" for trade in result["trades"])
 
 
+def test_adjusted_signal_mode_skips_stop_loss_on_corporate_action_day():
+    frame = _cross_frame("AAA.SH")
+    extras = pd.DataFrame(
+        {
+            "trade_date": [pd.Timestamp("2024-01-10"), pd.Timestamp("2024-01-11")],
+            "symbol": ["AAA.SH", "AAA.SH"],
+            "name": ["AAA.SH", "AAA.SH"],
+            "open": [1.5, 1.5],
+            "high": [1.6, 1.6],
+            "low": [1.4, 1.4],
+            "close": [1.5, 1.5],
+            "adjusted_close": [3.0, 3.0],
+            "corporate_action": [True, False],
+            "prev_close": [3.0, 1.5],
+            "volume": [1_000_000, 1_000_000],
+            "amount": [1_500_000, 1_500_000],
+            "limit_up": [3.3, 1.65],
+            "limit_down": [2.7, 1.35],
+            "suspended": [False, False],
+        }
+    )
+    frame = pd.concat([frame, extras], ignore_index=True)
+    frame["adjusted_close"] = frame["adjusted_close"].where(frame["adjusted_close"].notna(), frame["close"])
+    frame["corporate_action"] = frame["corporate_action"].where(frame["corporate_action"].notna(), False).astype(bool)
+    request = _cross_request(["AAA.SH"])
+    request.signal_price_mode = "adjusted"
+    request.stop_loss_pct = 0.20
+    request.end_date = "2024-01-11"
+    result = run_backtest({"AAA.SH": frame}, request)
+    assert not any(trade["side"] == "卖出" and trade["reason"] == "止损" for trade in result["trades"])
+
+
 def test_empty_date_range_is_rejected_cleanly():
     request = BacktestRequest(
         symbols=["600519.SH"], start_date="2030-01-01", end_date="2030-12-31"

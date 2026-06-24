@@ -4,7 +4,7 @@ import { navItems, workflowSteps } from "../appConfig";
 import { formatPercent } from "../formatters";
 import { Metric } from "./common";
 
-export function Sidebar({ openNav, openSettings }) {
+export function Sidebar({ openNav, openSettings, serviceOnline }) {
   return (
     <aside className="sidebar">
       <div className="brand"><span>QuantLab</span><small>本地量化研究平台</small></div>
@@ -16,7 +16,7 @@ export function Sidebar({ openNav, openSettings }) {
         ))}
       </nav>
       <div className="sidebar-bottom">
-        <span><i />本地服务运行中</span>
+        <span><i className={serviceOnline === false ? "offline-dot" : ""} />{serviceOnline === false ? "本地服务未连接" : "本地服务运行中"}</span>
         <button onClick={openSettings}><GearSix size={20} /><span>系统设置</span></button>
       </div>
     </aside>
@@ -100,10 +100,11 @@ export function LoadingBanner({ message }) {
 }
 
 export function DashboardFooter({ settings, source }) {
+  const sourceLabel = source?.available === false ? source.message : settings.dataset_id ? "固定快照" : source?.source || "连接中";
   return (
     <footer>
-      <span><i />数据状态正常</span>
-      <span>数据源：{settings.dataset_id ? "固定快照" : source?.source || "连接中"}</span>
+      <span><i className={source?.available === false ? "offline-dot" : ""} />{source?.available === false ? "数据服务异常" : "数据状态正常"}</span>
+      <span>数据源：{sourceLabel}</span>
       <span>引擎版本 v0.4.0</span>
       <span><Info size={16} />回测不代表未来收益</span>
     </footer>

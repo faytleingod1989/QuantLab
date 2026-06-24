@@ -124,7 +124,7 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
       },
     }));
   return (
-    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && close()}>
+    <div className="modal-backdrop" onClick={(event) => event.target === event.currentTarget && close()}>
       <div className="strategy-modal">
         <div className="modal-head">
           <div>
@@ -195,7 +195,7 @@ export function DataDrawer({
         : [...current.symbols, symbol],
     }));
   return (
-    <div className="modal-backdrop" onMouseDown={(event) => event.target === event.currentTarget && close()}>
+    <div className="modal-backdrop" onClick={(event) => event.target === event.currentTarget && close()}>
       <div className="data-modal">
         <div className="modal-head">
           <div>

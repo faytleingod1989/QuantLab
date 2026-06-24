@@ -174,11 +174,15 @@ def run_backtest(
                 previous = frame.loc[previous_date]
                 position = positions[symbol]
                 if position.quantity:
+                    skip_risk_exit = (
+                        request.signal_price_mode == "adjusted"
+                        and bool(previous.get("corporate_action", False))
+                    )
                     holding_return = float(previous["close"]) / position.average_cost - 1 if position.average_cost else 0.0
-                    if request.stop_loss_pct and holding_return <= -request.stop_loss_pct:
+                    if not skip_risk_exit and request.stop_loss_pct and holding_return <= -request.stop_loss_pct:
                         sell_candidates.append(symbol)
                         sell_reasons[symbol] = "止损"
-                    elif request.take_profit_pct and holding_return >= request.take_profit_pct:
+                    elif not skip_risk_exit and request.take_profit_pct and holding_return >= request.take_profit_pct:
                         sell_candidates.append(symbol)
                         sell_reasons[symbol] = "止盈"
                     elif can_rebalance and bool(previous["sell_signal"]):

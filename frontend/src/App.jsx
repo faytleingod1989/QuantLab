@@ -16,6 +16,15 @@ import { DataDrawer, SettingsDrawer, StrategyModal } from "./components/drawers"
 
 const DashboardCharts = lazy(() => import("./components/charts.jsx"));
 
+const errorMessage = (error, fallback = "操作失败") =>
+  error instanceof Error ? error.message : String(error || fallback);
+
+const logIgnoredError = (scope, error) => {
+  if (!(error instanceof DOMException && error.name === "AbortError")) {
+    console.error(`[QuantLab] ${scope}`, error);
+  }
+};
+
 function App() {
   const [settings, setSettings] = useState(initialSettings);
   const [result, setResult] = useState(null);
@@ -38,14 +47,15 @@ function App() {
     fetch(`${API}/backtests/compare?limit=6`)
       .then((response) => response.json())
       .then(setComparisons)
-      .catch(() => {});
+      .catch((error) => logIgnoredError("刷新回测对比失败", error));
   };
 
   const runBacktest = async (candidateSignal) => {
     const signal = candidateSignal?.constructor?.name === "AbortSignal" ? candidateSignal : undefined;
+    if (signal?.aborted) return;
     let taskId = null;
     const cancelSubmittedTask = () => {
-      if (taskId) fetch(`${API}/backtests/${taskId}/cancel`, { method: "POST" }).catch(() => {});
+      if (taskId) fetch(`${API}/backtests/${taskId}/cancel`, { method: "POST" }).catch((error) => logIgnoredError("取消孤儿回测任务失败", error));
     };
 
     signal?.addEventListener("abort", cancelSubmittedTask, { once: true });
@@ -68,6 +78,7 @@ function App() {
         return;
       }
 
+      let delay = 180;
       while (true) {
         const statusResponse = await fetch(`${API}/backtests/${task.id}`, { signal });
         if (!statusResponse.ok) throw new Error("无法读取回测任务状态");
@@ -84,10 +95,11 @@ function App() {
         if (status.status === "failed" || status.status === "cancelled") {
           throw new Error(status.error || `任务状态: ${status.status}`);
         }
-        await new Promise((resolve) => setTimeout(resolve, 180));
+        await new Promise((resolve) => setTimeout(resolve, delay));
+        delay = Math.min(Math.round(delay * 1.3), 3000);
       }
     } catch (error) {
-      if (error.name !== "AbortError") setNotice(`回测未完成：${error.message}`);
+      if (!(error instanceof DOMException && error.name === "AbortError")) setNotice(`回测未完成：${errorMessage(error)}`);
     } finally {
       signal?.removeEventListener("abort", cancelSubmittedTask);
       if (!signal?.aborted) {
@@ -103,7 +115,7 @@ function App() {
       await fetch(`${API}/backtests/${currentTaskId}/cancel`, { method: "POST" });
       setNotice("正在取消回测任务…");
     } catch (error) {
-      setNotice(`取消失败：${error.message}`);
+      setNotice(`取消失败：${errorMessage(error)}`);
     }
   };
 
@@ -130,7 +142,7 @@ function App() {
       applyDataset(dataset, dataset.summary.symbols);
       setNotice(dataset.duplicate ? "该数据集已存在并已选中" : `数据集已导入并选中：${dataset.summary.row_count} 行`);
     } catch (error) {
-      setNotice(`导入失败：${error.message}`);
+      setNotice(`导入失败：${errorMessage(error)}`);
     } finally {
       setImporting(false);
       event.target.value = "";
@@ -158,7 +170,7 @@ function App() {
       applyDataset(dataset, dataset.summary.symbols);
       setNotice(dataset.duplicate ? "真实行情快照已存在并已选中" : `真实行情已同步：${dataset.summary.row_count} 行`);
     } catch (error) {
-      setNotice(`同步失败：${error.message}`);
+      setNotice(`同步失败：${errorMessage(error)}`);
     } finally {
       setSyncing(false);
     }
@@ -175,7 +187,7 @@ function App() {
       const preview = await response.json();
       applyDataset(dataset, preview.summary.symbols);
     } catch (error) {
-      setNotice(`选择失败：${error.message}`);
+      setNotice(`选择失败：${errorMessage(error)}`);
     }
   };
 
@@ -209,7 +221,7 @@ function App() {
       }
       setDrawer("settings");
     } catch (error) {
-      setNotice(`保存失败：${error.message}`);
+      setNotice(`保存失败：${errorMessage(error)}`);
     } finally {
       setSavingStrategy(false);
     }
@@ -224,7 +236,7 @@ function App() {
   };
 
   useEffect(() => {
-    fetch(`${API}/datasets`).then((response) => response.json()).then(setDatasets).catch(() => {});
+    fetch(`${API}/datasets`).then((response) => response.json()).then(setDatasets).catch((error) => logIgnoredError("加载数据集失败", error));
   }, []);
 
   useEffect(() => {
@@ -246,7 +258,7 @@ function App() {
               }
         );
       })
-      .catch(() => {});
+      .catch((error) => logIgnoredError("加载策略版本失败", error));
   }, []);
 
   useEffect(() => {
@@ -282,7 +294,10 @@ function App() {
         }
       })
       .catch((error) => {
-        if (active && error.name !== "AbortError") setSource({ message: "本地服务尚未启动" });
+        if (active && !(error instanceof DOMException && error.name === "AbortError")) {
+          console.error("[QuantLab] 初始化本地服务失败", error);
+          setSource({ available: false, message: "本地服务尚未启动" });
+        }
       })
       .finally(() => {
         if (active) setBooting(false);
@@ -322,7 +337,7 @@ function App() {
 
   return (
     <div className="app-shell">
-      <Sidebar openNav={openNav} openSettings={() => setDrawer("settings")} />
+      <Sidebar openNav={openNav} openSettings={() => setDrawer("settings")} serviceOnline={source?.available !== false} />
       <main className="main-view">
         <Topbar
           settings={settings}

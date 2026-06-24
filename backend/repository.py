@@ -7,6 +7,22 @@ from pathlib import Path
 from typing import Any
 
 
+ALLOWED_MIGRATION_COLUMNS = {
+    ("backtest_runs", "project_id", "TEXT"),
+    ("backtest_runs", "strategy_id", "TEXT"),
+    ("backtest_runs", "strategy_version_id", "TEXT"),
+    ("backtest_runs", "dataset_fingerprint", "TEXT"),
+    ("datasets", "source", "TEXT NOT NULL DEFAULT 'csv'"),
+    ("securities", "industry", "TEXT"),
+    ("securities", "total_share", "INTEGER"),
+    ("securities", "float_share", "INTEGER"),
+    ("security_daily_status", "limit_exempt", "INTEGER NOT NULL DEFAULT 0"),
+    ("security_daily_status", "limit_reason", "TEXT NOT NULL DEFAULT ''"),
+    ("security_daily_status", "suspension_streak", "INTEGER NOT NULL DEFAULT 0"),
+    ("security_daily_status", "long_suspended", "INTEGER NOT NULL DEFAULT 0"),
+}
+
+
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -197,6 +213,8 @@ class BacktestRepository:
 
     @staticmethod
     def _ensure_column(connection: sqlite3.Connection, table: str, column: str, kind: str) -> None:
+        if (table, column, kind) not in ALLOWED_MIGRATION_COLUMNS:
+            raise ValueError(f"未允许的数据库迁移字段: {table}.{column} {kind}")
         columns = {row["name"] for row in connection.execute(f"PRAGMA table_info({table})")}
         if column not in columns:
             connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {kind}")
@@ -260,13 +278,18 @@ class BacktestRepository:
         self.update_run(run_id, status="failed", error=error, finished_at=utc_now())
 
     def cancel_run(self, run_id: str) -> None:
-        self.update_run(
-            run_id,
-            status="cancelled",
-            cancel_requested=1,
-            error="任务已由用户取消",
-            finished_at=utc_now(),
-        )
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE backtest_runs
+                SET status = 'cancelled',
+                    cancel_requested = 1,
+                    error = '任务已由用户取消',
+                    finished_at = ?
+                WHERE id = ? AND status IN ('queued', 'running')
+                """,
+                (utc_now(), run_id),
+            )
 
     def request_cancel(self, run_id: str) -> bool:
         with self._connect() as connection:
@@ -633,7 +656,7 @@ class BacktestRepository:
             "status": row["status"],
             "progress": row["progress"],
             "cancel_requested": bool(row["cancel_requested"]),
-            "config": json.loads(row["config_json"]),
+            "config": BacktestRepository._safe_json(row["config_json"], {}),
             "error": row["error"],
             "created_at": row["created_at"],
             "started_at": row["started_at"],
@@ -644,8 +667,21 @@ class BacktestRepository:
             "dataset_fingerprint": row["dataset_fingerprint"],
         }
         if include_result:
-            result["result"] = json.loads(row["result_json"]) if row["result_json"] else None
+            result["result"] = (
+                BacktestRepository._safe_json(row["result_json"], {"decode_error": True})
+                if row["result_json"]
+                else None
+            )
         return result
+
+    @staticmethod
+    def _safe_json(raw: str | None, fallback: Any) -> Any:
+        if not raw:
+            return fallback
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError:
+            return fallback
 
     def ensure_default_project(self) -> dict[str, Any]:
         existing = self.get_project("default")

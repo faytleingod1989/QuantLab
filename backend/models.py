@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -59,7 +60,12 @@ class BacktestRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_dates(self):
-        if self.start_date >= self.end_date:
+        try:
+            start = date.fromisoformat(self.start_date)
+            end = date.fromisoformat(self.end_date)
+        except ValueError as error:
+            raise ValueError("日期格式必须为 YYYY-MM-DD") from error
+        if start >= end:
             raise ValueError("结束日期必须晚于开始日期")
         if not self.symbols:
             raise ValueError("至少选择一只股票")
@@ -86,7 +92,12 @@ class AkshareDatasetRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_dates(self):
-        if self.start_date >= self.end_date:
+        try:
+            start = date.fromisoformat(self.start_date)
+            end = date.fromisoformat(self.end_date)
+        except ValueError as error:
+            raise ValueError("日期格式必须为 YYYY-MM-DD") from error
+        if start >= end:
             raise ValueError("结束日期必须晚于开始日期")
         return self
 

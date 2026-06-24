@@ -35,12 +35,35 @@ def test_repository_persists_runs_across_instances(tmp_path):
     assert restored["result"]["metrics"]["total_return"] == 0.1
 
 
+def test_repository_decode_tolerates_corrupted_json(tmp_path):
+    repository = BacktestRepository(tmp_path / "quantlab.db")
+    repository.create_run("run-1", {"symbols": ["600519.SH"]})
+    with repository._connect() as connection:
+        connection.execute(
+            "UPDATE backtest_runs SET config_json = ?, result_json = ? WHERE id = ?",
+            ("{bad", "{bad", "run-1"),
+        )
+    restored = repository.get_run("run-1", include_result=True)
+    assert restored["config"] == {}
+    assert restored["result"] == {"decode_error": True}
+
+
 def test_repository_marks_interrupted_jobs_failed(tmp_path):
     repository = BacktestRepository(tmp_path / "quantlab.db")
     repository.create_run("run-1", {"symbols": []})
     repository.update_run("run-1", status="running")
     assert repository.mark_interrupted_runs() == 1
     assert repository.get_run("run-1")["status"] == "failed"
+
+
+def test_cancel_run_does_not_overwrite_completed_run(tmp_path):
+    repository = BacktestRepository(tmp_path / "quantlab.db")
+    repository.create_run("run-1", {"symbols": ["600519.SH"]})
+    repository.complete_run("run-1", {"metrics": {"total_return": 0.1}})
+    repository.cancel_run("run-1")
+    run = repository.get_run("run-1", include_result=True)
+    assert run["status"] == "completed"
+    assert run["result"]["metrics"]["total_return"] == 0.1
 
 
 def test_strategy_versions_are_immutable_and_ordered(tmp_path):
@@ -300,3 +323,10 @@ def test_engine_cooperative_cancellation():
             request,
             cancel_check=lambda: True,
         )
+
+
+def test_backtest_request_validates_real_dates():
+    with pytest.raises(ValueError, match="日期格式"):
+        BacktestRequest(start_date="2024-13-01", end_date="2024-02-01")
+    with pytest.raises(ValueError, match="结束日期必须晚于开始日期"):
+        BacktestRequest(start_date="2024-02-01", end_date="2024-01-31")
