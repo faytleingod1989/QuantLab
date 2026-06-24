@@ -70,6 +70,22 @@ export function SettingsDrawer({ settings, setSettings, onRun, onCancel, running
         </SettingRow>
       </section>
       <section>
+        <h3>股票池过滤</h3>
+        <SettingRow label="排除 ST">
+          <select value={settings.exclude_st === false ? "no" : "yes"} onChange={(event) => update("exclude_st", event.target.value === "yes")}>
+            <option value="yes">是</option>
+            <option value="no">否</option>
+          </select>
+        </SettingRow>
+        <SettingRow label="上市天数">
+          <input type="number" min="0" value={settings.min_listed_days || 0} onChange={(event) => update("min_listed_days", Number(event.target.value))} />
+        </SettingRow>
+        <SettingRow label="20日均额">
+          <input type="number" min="0" value={settings.min_average_amount || 0} onChange={(event) => update("min_average_amount", Number(event.target.value))} />
+        </SettingRow>
+        <small className="hint">过滤条件只影响新买入候选，不会强制卖出已持仓股票。</small>
+      </section>
+      <section>
         <h3>交易成本（双边）</h3>
         <RateInput label="佣金费率" value={settings.commission_rate} onChange={(value) => update("commission_rate", value)} note={`最低 ${settings.min_commission} 元`} />
         <RateInput label="印花税率" value={settings.stamp_duty_rate} onChange={(value) => update("stamp_duty_rate", value)} note="仅卖出收取" />
@@ -99,14 +115,49 @@ export function SettingsDrawer({ settings, setSettings, onRun, onCancel, running
   );
 }
 
+const indicatorOptions = [
+  ["ma_cross", "均线交叉"],
+  ["price_vs_ma", "价格均线"],
+  ["rsi", "RSI"],
+  ["macd", "MACD"],
+  ["bollinger", "布林带"],
+];
+
+const operatorOptions = [
+  ["cross_above", "上穿"],
+  ["cross_below", "下穿"],
+  ["above", "高于"],
+  ["below", "低于"],
+];
+
 function RuleNode({ title, tone, condition, onChange }) {
+  const indicator = condition.indicator || "ma_cross";
+  const thresholdLabel = indicator === "rsi" ? "阈值" : indicator === "macd" ? "信号周期" : indicator === "bollinger" ? "标准差倍数" : null;
   return (
     <div className={`rule-node ${tone}`}>
       <b>{title}</b>
-      <span>短期均线</span>
+      <span>指标</span>
+      <select value={indicator} onChange={(event) => onChange("indicator", event.target.value)}>
+        {indicatorOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      </select>
+      <span>条件</span>
+      <select value={condition.operator || "cross_above"} onChange={(event) => onChange("operator", event.target.value)}>
+        {operatorOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+      </select>
+      <span>{indicator === "bollinger" ? "周期" : indicator === "rsi" ? "RSI周期" : "短周期"}</span>
       <input type="number" value={condition.left} onChange={(event) => onChange("left", event.target.value)} />
-      <span>{tone === "green" ? "上穿" : "下穿"}长期均线</span>
-      <input type="number" value={condition.right} onChange={(event) => onChange("right", event.target.value)} />
+      {indicator !== "price_vs_ma" && indicator !== "rsi" && indicator !== "bollinger" ? (
+        <>
+          <span>长周期</span>
+          <input type="number" value={condition.right} onChange={(event) => onChange("right", event.target.value)} />
+        </>
+      ) : null}
+      {thresholdLabel ? (
+        <>
+          <span>{thresholdLabel}</span>
+          <input type="number" value={condition.threshold} onChange={(event) => onChange("threshold", event.target.value)} />
+        </>
+      ) : null}
     </div>
   );
 }
@@ -119,7 +170,7 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
       strategy: {
         ...current.strategy,
         [kind]: current.strategy[kind].map((condition, index) =>
-          index === 0 ? { ...condition, [key]: Number(value) } : condition
+          index === 0 ? { ...condition, [key]: key === "indicator" || key === "operator" ? value : Number(value) } : condition
         ),
       },
     }));

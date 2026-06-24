@@ -7,7 +7,7 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class RuleCondition(BaseModel):
-    indicator: Literal["ma_cross", "price_vs_ma", "rsi"] = "ma_cross"
+    indicator: Literal["ma_cross", "price_vs_ma", "rsi", "macd", "bollinger"] = "ma_cross"
     operator: Literal["cross_above", "cross_below", "above", "below"] = "cross_above"
     left: int = Field(default=20, ge=2, le=500)
     right: int = Field(default=60, ge=2, le=500)
@@ -49,6 +49,9 @@ class BacktestRequest(BaseModel):
     slippage_rate: float = Field(default=0.0002, ge=0, le=0.02)
     max_position: float = Field(default=0.95, gt=0, le=1)
     max_symbol_position: float = Field(default=0.35, gt=0, le=1)
+    exclude_st: bool = True
+    min_listed_days: int = Field(default=0, ge=0, le=3650)
+    min_average_amount: float = Field(default=0.0, ge=0)
     stop_loss_pct: float = Field(default=0.0, ge=0, le=1)
     take_profit_pct: float = Field(default=0.0, ge=0, le=10)
     rebalance_days: int = Field(default=1, ge=1, le=250)

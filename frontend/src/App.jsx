@@ -277,11 +277,14 @@ function App() {
         setComparisons(comparisonData);
         const latest = history[0];
         if (latest?.status === "completed") {
+          const latestStrategy = latest.config.strategy || initialSettings.strategy;
           setSettings((current) => ({
+            ...initialSettings,
             ...latest.config,
             project_id: latest.config.project_id || current.project_id,
             strategy_id: latest.config.strategy_id || current.strategy_id,
             strategy_version_id: latest.config.strategy_version_id || current.strategy_version_id,
+            strategy: { ...initialSettings.strategy, ...latestStrategy },
           }));
           const response = await fetch(`${API}/backtests/${latest.id}/result`, { signal: controller.signal });
           if (response.ok && active) {

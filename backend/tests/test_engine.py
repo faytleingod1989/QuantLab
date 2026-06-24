@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from backend.engine import _fee, _money, _rsi, run_backtest
+from backend.engine import _condition, _fee, _money, _rsi, run_backtest
 from backend.models import BacktestRequest, RuleCondition, VisualStrategy
 
 
@@ -57,6 +57,22 @@ def test_wilder_rsi_matches_independent_recursive_reference():
     average_loss = losses.iloc[1 : period + 1].mean()
     expected = 100 - 100 / (1 + average_gain / average_loss)
     assert _rsi(values, period).iloc[period] == pytest.approx(expected, abs=1e-10)
+
+
+def test_macd_and_bollinger_conditions_generate_boolean_signals():
+    dates = pd.bdate_range("2024-01-02", periods=40)
+    close = pd.Series(np.r_[np.linspace(10, 9, 20), np.linspace(9, 13, 20)])
+    frame = pd.DataFrame(
+        {
+            "trade_date": dates,
+            "close": close,
+            "signal_close": close,
+        }
+    )
+    macd = _condition(frame, RuleCondition(indicator="macd", operator="cross_above", left=12, right=26, threshold=9))
+    bollinger = _condition(frame, RuleCondition(indicator="bollinger", operator="above", left=20, right=20, threshold=2))
+    assert macd.dtype == bool
+    assert bollinger.dtype == bool
 
 
 def test_benchmark_uses_independent_price_series_not_strategy_return():
@@ -208,6 +224,16 @@ def test_single_symbol_position_cap_limits_buy_value():
     result = run_backtest({"AAA.SH": _cross_frame("AAA.SH")}, request)
     buy_value = sum(trade["value"] for trade in result["trades"] if trade["side"] == "买入")
     assert buy_value <= request.initial_cash * request.max_symbol_position
+
+
+def test_stock_pool_filter_excludes_st_buy_candidates():
+    frame = _cross_frame("AAA.SH")
+    frame["name"] = "ST测试"
+    request = _cross_request(["AAA.SH"])
+    request.exclude_st = True
+    result = run_backtest({"AAA.SH": frame}, request)
+    assert result["trades"] == []
+    assert any(event["reason"] == "ST过滤" for event in result["order_events"])
 
 
 def test_stop_loss_exits_position_before_signal_sell():

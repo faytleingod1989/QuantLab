@@ -63,6 +63,29 @@ def _condition(frame: pd.DataFrame, rule: RuleCondition) -> pd.Series:
         if rule.operator == "cross_below":
             return (close < moving) & (close.shift(1) >= moving.shift(1))
         return close > moving if rule.operator == "above" else close < moving
+    if rule.indicator == "macd":
+        fast = close.ewm(span=rule.left, adjust=False).mean()
+        slow = close.ewm(span=rule.right, adjust=False).mean()
+        macd = fast - slow
+        signal_period = max(2, min(int(rule.threshold or 9), 100))
+        signal = macd.ewm(span=signal_period, adjust=False).mean()
+        if rule.operator == "cross_above":
+            return (macd > signal) & (macd.shift(1) <= signal.shift(1))
+        if rule.operator == "cross_below":
+            return (macd < signal) & (macd.shift(1) >= signal.shift(1))
+        return macd > signal if rule.operator == "above" else macd < signal
+    if rule.indicator == "bollinger":
+        period = close.rolling(rule.left)
+        middle = period.mean()
+        deviation = period.std(ddof=0)
+        multiplier = rule.threshold if 0 < rule.threshold <= 10 else 2.0
+        upper = middle + multiplier * deviation
+        lower = middle - multiplier * deviation
+        if rule.operator == "cross_above":
+            return (close > upper) & (close.shift(1) <= upper.shift(1))
+        if rule.operator == "cross_below":
+            return (close < lower) & (close.shift(1) >= lower.shift(1))
+        return close > upper if rule.operator == "above" else close < lower
     value = _rsi(close, rule.left)
     if rule.operator == "cross_above":
         return (value > rule.threshold) & (value.shift(1) <= rule.threshold)
@@ -105,6 +128,18 @@ def _at_or_above(open_price, limit_price) -> bool:
     return _price(open_price) >= _price(limit_price)
 
 
+def _passes_stock_filters(row: pd.Series, request: BacktestRequest, signal_date) -> tuple[bool, str]:
+    if request.exclude_st and "ST" in str(row.get("name", "")).upper():
+        return False, "ST过滤"
+    if request.min_listed_days and pd.notna(row.get("listed_date", pd.NaT)):
+        listed_date = pd.Timestamp(row["listed_date"])
+        if (pd.Timestamp(signal_date) - listed_date).days < request.min_listed_days:
+            return False, "上市天数不足"
+    if request.min_average_amount and float(row.get("average_amount_20", 0) or 0) < request.min_average_amount:
+        return False, "成交额不足"
+    return True, ""
+
+
 def _round(value: float) -> float:
     return round(float(value), 4)
 
@@ -139,6 +174,8 @@ def run_backtest(
         current["sell_signal"] = _combine(
             current, request.strategy.sell_conditions, request.strategy.sell_logic
         )
+        amount = current["amount"] if "amount" in current else current["volume"] * current["close"]
+        current["average_amount_20"] = pd.to_numeric(amount, errors="coerce").fillna(0).rolling(20, min_periods=1).mean()
         current = current.set_index("trade_date")
         prepared[symbol] = current
 
@@ -189,7 +226,11 @@ def run_backtest(
                         sell_candidates.append(symbol)
                         sell_reasons[symbol] = "卖出信号"
                 elif can_rebalance and bool(previous["buy_signal"]):
-                    buy_candidates.append(symbol)
+                    passed, reason = _passes_stock_filters(previous, request, previous_date)
+                    if passed:
+                        buy_candidates.append(symbol)
+                    else:
+                        order_events.append({"date": str(date.date()), "symbol": symbol, "reason": reason})
 
         for symbol in sell_candidates:
             row = prepared[symbol].loc[date]
@@ -410,6 +451,9 @@ def _summarize(
                 else "策略信号、撮合、估值、现金和费用均使用未复权价格"
             ),
             f"调仓周期 {request.rebalance_days} 个交易日；单标的仓位上限 {request.max_symbol_position:.0%}",
+            (
+                f"股票池过滤：排除 ST={request.exclude_st}，最少上市天数 {request.min_listed_days}，20日均成交额下限 {request.min_average_amount:,.0f}"
+            ),
             (
                 f"启用止损 {request.stop_loss_pct:.0%}"
                 if request.stop_loss_pct
