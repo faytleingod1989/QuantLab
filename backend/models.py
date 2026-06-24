@@ -13,6 +13,26 @@ class RuleCondition(BaseModel):
     right: int = Field(default=60, ge=2, le=500)
     threshold: float = Field(default=50, ge=0, le=100)
 
+    @model_validator(mode="after")
+    def validate_indicator_parameters(self):
+        if self.indicator in {"ma_cross", "macd"} and self.left >= self.right:
+            raise ValueError("短周期必须小于长周期")
+        if self.indicator == "macd":
+            if self.left == 20 and self.right == 60 and self.threshold == 50:
+                self.left = 12
+                self.right = 26
+                self.threshold = 9
+            if not 2 <= self.threshold <= 60:
+                raise ValueError("MACD 信号周期必须在 2 到 60 之间")
+        if self.indicator == "bollinger":
+            if self.threshold == 50:
+                self.threshold = 2
+            if not 0 < self.threshold <= 10:
+                raise ValueError("布林带标准差倍数必须大于 0 且不超过 10")
+        if self.indicator == "rsi" and not 0 <= self.threshold <= 100:
+            raise ValueError("RSI 阈值必须在 0 到 100 之间")
+        return self
+
 
 class VisualStrategy(BaseModel):
     name: str = "均线多头策略"

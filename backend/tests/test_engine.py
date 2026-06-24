@@ -3,7 +3,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from backend.engine import _condition, _fee, _money, _rsi, run_backtest
+from backend.engine import _condition, _fee, _money, _passes_stock_filters, _rsi, run_backtest
 from backend.models import BacktestRequest, RuleCondition, VisualStrategy
 
 
@@ -73,6 +73,15 @@ def test_macd_and_bollinger_conditions_generate_boolean_signals():
     bollinger = _condition(frame, RuleCondition(indicator="bollinger", operator="above", left=20, right=20, threshold=2))
     assert macd.dtype == bool
     assert bollinger.dtype == bool
+
+
+def test_indicator_defaults_are_normalized_and_invalid_periods_rejected():
+    macd = RuleCondition(indicator="macd")
+    assert (macd.left, macd.right, macd.threshold) == (12, 26, 9)
+    bollinger = RuleCondition(indicator="bollinger")
+    assert bollinger.threshold == 2
+    with pytest.raises(ValueError, match="短周期"):
+        RuleCondition(indicator="macd", left=26, right=12, threshold=9)
 
 
 def test_benchmark_uses_independent_price_series_not_strategy_return():
@@ -234,6 +243,22 @@ def test_stock_pool_filter_excludes_st_buy_candidates():
     result = run_backtest({"AAA.SH": frame}, request)
     assert result["trades"] == []
     assert any(event["reason"] == "ST过滤" for event in result["order_events"])
+
+
+def test_stock_pool_filter_uses_listing_trading_sessions_before_calendar_days():
+    request = _cross_request(["AAA.SH"])
+    request.min_listed_days = 2
+    row = pd.Series(
+        {
+            "name": "AAA.SH",
+            "listed_date": pd.Timestamp("2024-01-05"),
+            "listing_session": 2,
+            "average_amount_20": 100_000_000,
+        }
+    )
+    passed, reason = _passes_stock_filters(row, request, pd.Timestamp("2024-01-08"))
+    assert passed is False
+    assert reason == "上市天数不足"
 
 
 def test_stop_loss_exits_position_before_signal_sell():

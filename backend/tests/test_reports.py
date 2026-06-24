@@ -3,6 +3,7 @@ from io import BytesIO
 from pypdf import PdfReader
 
 from backend.reports import (
+    _register_pdf_font,
     paginate_trades,
     render_html_report,
     render_markdown_report,
@@ -106,6 +107,27 @@ def test_render_pdf_report_returns_readable_pdf():
     assert content.startswith(b"%PDF")
     reader = PdfReader(BytesIO(content))
     assert len(reader.pages) >= 1
+
+
+def test_register_pdf_font_uses_configured_font(monkeypatch, tmp_path):
+    font_path = tmp_path / "QuantLabTestFont.ttc"
+    font_path.write_bytes(b"fake-font")
+
+    class FakeFont:
+        def __init__(self, name, path):
+            self.name = name
+            self.path = path
+
+    class FakePdfMetrics:
+        registered = []
+
+        @classmethod
+        def registerFont(cls, font):
+            cls.registered.append(font)
+
+    monkeypatch.setenv("QUANTLAB_PDF_FONT", str(font_path))
+    assert _register_pdf_font(FakePdfMetrics, FakeFont) == "QuantLabCJK"
+    assert FakePdfMetrics.registered[-1].path == str(font_path)
 
 
 def _sample_record():

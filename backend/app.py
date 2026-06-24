@@ -169,8 +169,34 @@ def import_industry_history_csv(payload: IndustryHistoryCsvRequest) -> dict:
         records = load_industry_history_csv_text(payload.csv_text)
     except (ValueError, UnicodeError) as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
+    security_master = _missing_security_master_from_industry_history(records)
+    repository.upsert_securities(security_master)
     repository.upsert_industry_history(records)
-    return {"source": "industry_history_csv", "count": len(records)}
+    return {
+        "source": "industry_history_csv",
+        "count": len(records),
+        "security_count": len(security_master),
+    }
+
+
+def _missing_security_master_from_industry_history(records: list[dict]) -> list[dict]:
+    missing_by_symbol = {}
+    for record in records:
+        symbol = record["symbol"]
+        if symbol in missing_by_symbol or repository.get_security(symbol):
+            continue
+        missing_by_symbol[symbol] = {
+            "symbol": symbol,
+            "name": symbol,
+            "exchange": symbol.split(".")[-1],
+            "board": record.get("board") or infer_board(symbol),
+            "listed_date": record.get("valid_from") or "1990-12-19",
+            "delisted_date": None,
+            "status": "active",
+            "industry": record.get("industry"),
+            "source": "industry_history_csv",
+        }
+    return list(missing_by_symbol.values())
 
 
 @app.get("/api/securities/{symbol}/status")
@@ -394,10 +420,11 @@ def _persist_dataset(name: str, frame, source: str) -> dict:
         repository.replace_security_daily_status(
             existing["id"], extract_security_daily_status(existing["id"], frame, source, prepared=True)
         )
+        quality_checks = adjustment_quality_checks(existing["id"], frame, prepared=True)
         repository.replace_dataset_quality_checks(
-            existing["id"], adjustment_quality_checks(existing["id"], frame, prepared=True)
+            existing["id"], quality_checks
         )
-        return {**existing, "duplicate": True, "summary": summary}
+        return {**existing, "duplicate": True, "summary": summary, "quality_checks": quality_checks}
     dataset_id = uuid4().hex
     dataset_directory = database_path.parent / "datasets"
     dataset_directory.mkdir(parents=True, exist_ok=True)
@@ -417,10 +444,11 @@ def _persist_dataset(name: str, frame, source: str) -> dict:
     repository.replace_security_daily_status(
         dataset_id, extract_security_daily_status(dataset_id, frame, source, prepared=True)
     )
+    quality_checks = adjustment_quality_checks(dataset_id, frame, prepared=True)
     repository.replace_dataset_quality_checks(
-        dataset_id, adjustment_quality_checks(dataset_id, frame, prepared=True)
+        dataset_id, quality_checks
     )
-    return {**record, "duplicate": False, "summary": summary}
+    return {**record, "duplicate": False, "summary": summary, "quality_checks": quality_checks}
 
 
 @app.post("/api/datasets/csv", status_code=201)

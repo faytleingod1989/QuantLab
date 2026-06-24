@@ -131,7 +131,13 @@ def _at_or_above(open_price, limit_price) -> bool:
 def _passes_stock_filters(row: pd.Series, request: BacktestRequest, signal_date) -> tuple[bool, str]:
     if request.exclude_st and "ST" in str(row.get("name", "")).upper():
         return False, "ST过滤"
-    if request.min_listed_days and pd.notna(row.get("listed_date", pd.NaT)):
+    listing_session_checked = False
+    if request.min_listed_days and pd.notna(row.get("listing_session", pd.NA)):
+        listing_session_checked = True
+        completed_trading_days = max(0, int(row["listing_session"]) - 1)
+        if completed_trading_days < request.min_listed_days:
+            return False, "上市天数不足"
+    if request.min_listed_days and not listing_session_checked and pd.notna(row.get("listed_date", pd.NaT)):
         listed_date = pd.Timestamp(row["listed_date"])
         if (pd.Timestamp(signal_date) - listed_date).days < request.min_listed_days:
             return False, "上市天数不足"

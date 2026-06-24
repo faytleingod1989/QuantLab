@@ -133,6 +133,21 @@ const operatorOptions = [
   ["below", "低于"],
 ];
 
+export const indicatorDefaults = {
+  ma_cross: { left: 20, right: 60, threshold: 50 },
+  price_vs_ma: { left: 20, right: 60, threshold: 50 },
+  rsi: { left: 14, right: 60, threshold: 50 },
+  macd: { left: 12, right: 26, threshold: 9 },
+  bollinger: { left: 20, right: 60, threshold: 2 },
+};
+
+export function updateRuleConditionValue(condition, key, value) {
+  if (key === "indicator") {
+    return { ...condition, ...indicatorDefaults[value], indicator: value };
+  }
+  return { ...condition, [key]: key === "operator" ? value : Number(value) };
+}
+
 function RuleNode({ title, tone, condition, onChange }) {
   const indicator = condition.indicator || "ma_cross";
   const thresholdLabel = indicator === "rsi" ? "阈值" : indicator === "macd" ? "信号周期" : indicator === "bollinger" ? "标准差倍数" : null;
@@ -173,7 +188,9 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
       strategy: {
         ...current.strategy,
         [kind]: current.strategy[kind].map((condition, index) =>
-          index === 0 ? { ...condition, [key]: key === "indicator" || key === "operator" ? value : Number(value) } : condition
+          index === 0
+            ? updateRuleConditionValue(condition, key, value)
+            : condition
         ),
       },
     }));

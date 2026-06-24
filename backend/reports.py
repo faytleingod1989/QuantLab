@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from html import escape
 from io import BytesIO
+import os
 from pathlib import Path
 from typing import Any
 
@@ -345,11 +346,20 @@ def _equity_svg(curve: list[dict[str, Any]]) -> str:
 
 def _register_pdf_font(pdfmetrics, TTFont) -> str:
     candidates = [
+        Path(os.environ["QUANTLAB_PDF_FONT"]) if os.environ.get("QUANTLAB_PDF_FONT") else None,
+        Path(__file__).resolve().parent.parent / "data" / "fonts" / "NotoSansCJKsc-Regular.otf",
+        Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+        Path("/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf"),
+        Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
+        Path("/System/Library/Fonts/PingFang.ttc"),
+        Path("/Library/Fonts/Arial Unicode.ttf"),
         Path("C:/Windows/Fonts/msyh.ttc"),
         Path("C:/Windows/Fonts/simsun.ttc"),
         Path("C:/Windows/Fonts/simhei.ttf"),
     ]
     for path in candidates:
+        if path is None:
+            continue
         if path.exists():
             try:
                 pdfmetrics.registerFont(TTFont("QuantLabCJK", str(path)))

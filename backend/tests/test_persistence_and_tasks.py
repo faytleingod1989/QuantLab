@@ -136,6 +136,46 @@ def test_repository_persists_industry_history(tmp_path):
     assert history[0]["board"] == "创业板"
 
 
+def test_industry_history_import_builds_missing_security_master(monkeypatch):
+    from backend import app as app_module
+
+    class FakeRepository:
+        def get_security(self, symbol):
+            return {"symbol": symbol} if symbol == "600519.SH" else None
+
+    monkeypatch.setattr(app_module, "repository", FakeRepository())
+    records = [
+        {
+            "symbol": "600519.SH",
+            "valid_from": "2001-08-27",
+            "industry": "食品饮料",
+            "board": "沪市主板",
+            "source": "industry_history_csv",
+        },
+        {
+            "symbol": "300750.SZ",
+            "valid_from": "2018-06-11",
+            "industry": "电力设备",
+            "board": "创业板",
+            "source": "industry_history_csv",
+        },
+    ]
+    masters = app_module._missing_security_master_from_industry_history(records)
+    assert masters == [
+        {
+            "symbol": "300750.SZ",
+            "name": "300750.SZ",
+            "exchange": "SZ",
+            "board": "创业板",
+            "listed_date": "2018-06-11",
+            "delisted_date": None,
+            "status": "active",
+            "industry": "电力设备",
+            "source": "industry_history_csv",
+        }
+    ]
+
+
 def test_real_security_master_overrides_demo_seed_listing_date(tmp_path):
     repository = BacktestRepository(tmp_path / "quantlab.db")
     repository.upsert_securities(

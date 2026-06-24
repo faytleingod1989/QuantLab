@@ -141,6 +141,7 @@ function App() {
       const dataset = await response.json();
       setDatasets((current) => [dataset, ...current.filter((item) => item.id !== dataset.id)]);
       applyDataset(dataset, dataset.summary.symbols);
+      setDatasetQuality({ dataset, summary: dataset.summary, quality_checks: dataset.quality_checks || [] });
       setNotice(dataset.duplicate ? "该数据集已存在并已选中" : `数据集已导入并选中：${dataset.summary.row_count} 行`);
     } catch (error) {
       setNotice(`导入失败：${errorMessage(error)}`);
@@ -162,6 +163,8 @@ function App() {
       });
       if (!response.ok) throw new Error((await response.json()).detail || "行业历史导入失败");
       const result = await response.json();
+      const securitiesResponse = await fetch(`${API}/securities`);
+      if (securitiesResponse.ok) setSecurities(await securitiesResponse.json());
       setNotice(`行业历史已导入：${result.count} 条`);
     } catch (error) {
       setNotice(`行业历史导入失败：${errorMessage(error)}`);
@@ -190,6 +193,7 @@ function App() {
       const dataset = await response.json();
       setDatasets((current) => [dataset, ...current.filter((item) => item.id !== dataset.id)]);
       applyDataset(dataset, dataset.summary.symbols);
+      setDatasetQuality({ dataset, summary: dataset.summary, quality_checks: dataset.quality_checks || [] });
       setNotice(dataset.duplicate ? "真实行情快照已存在并已选中" : `真实行情已同步：${dataset.summary.row_count} 行`);
     } catch (error) {
       setNotice(`同步失败：${errorMessage(error)}`);

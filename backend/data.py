@@ -204,6 +204,7 @@ def prepare_market_frame(frame: pd.DataFrame) -> pd.DataFrame:
             continue
         eligible_index = group[group["trade_date"] >= listed_date].index
         listing_sessions.loc[eligible_index] = range(1, len(eligible_index) + 1)
+    current["listing_session"] = listing_sessions
     exemptions = [
         _is_limit_exempt(
             symbol,
