@@ -60,6 +60,7 @@ def render_markdown_report(record: dict[str, Any]) -> str:
     quality_checks = data_quality.get("quality_checks") or []
     trades = result.get("trades") or []
     assumptions = result.get("assumptions") or []
+    report_note = str(config.get("report_note", "") or "").strip()
 
     lines = [
         f"# QuantLab 回测报告：{_strategy_name(result, config)}",
@@ -73,6 +74,10 @@ def render_markdown_report(record: dict[str, Any]) -> str:
         f"- 信号价格口径：{data_quality.get('signal_price_mode', config.get('signal_price_mode', 'unadjusted'))}",
         f"- 基准：{benchmark.get('label', config.get('benchmark', '000300.SH'))}",
         "",
+    ]
+    if report_note:
+        lines.extend(["## 研究备注", "", report_note, ""])
+    lines.extend([
         "## 核心指标",
         "",
         "| 指标 | 数值 |",
@@ -87,7 +92,7 @@ def render_markdown_report(record: dict[str, Any]) -> str:
         "",
         "## 数据质量检查",
         "",
-    ]
+    ])
     if quality_checks:
         lines.extend(["| 检查项 | 级别 | 说明 |", "|---|---|---|"])
         for check in quality_checks:
@@ -132,6 +137,8 @@ def render_html_report(record: dict[str, Any]) -> str:
     trades = result.get("trades") or []
     events = result.get("order_events") or []
     title = _strategy_name(result, config)
+    report_note = str(config.get("report_note", "") or "").strip()
+    note_section = f"<section><h2>研究备注</h2><p>{escape(report_note)}</p></section>" if report_note else ""
 
     metric_cards = "".join(
         f"<article><span>{escape(label)}</span><b>{escape(value)}</b></article>"
@@ -207,6 +214,7 @@ def render_html_report(record: dict[str, Any]) -> str:
     </div>
   </header>
   <div class="metrics">{metric_cards}</div>
+  {note_section}
   <section><h2>净值/回撤走势</h2>{_equity_svg(result.get('equity_curve') or [])}</section>
   <section><h2>订单拒绝统计</h2><div class="events">{event_chips}</div></section>
   <section><h2>数据质量检查</h2><table><thead><tr><th>检查项</th><th>级别</th><th>说明</th></tr></thead><tbody>{quality_rows}</tbody></table></section>
@@ -236,6 +244,7 @@ def render_pdf_report(record: dict[str, Any]) -> bytes:
     trades = result.get("trades") or []
     events = result.get("order_events") or []
     title = _strategy_name(result, config)
+    report_note = str(config.get("report_note", "") or "").strip()
 
     styles = getSampleStyleSheet()
     styles.add(ParagraphStyle(name="CJKTitle", parent=styles["Title"], fontName=font_name, fontSize=20, leading=26))
@@ -272,6 +281,7 @@ def render_pdf_report(record: dict[str, Any]) -> bytes:
         Paragraph(f"QuantLab 回测报告：{title}", styles["CJKTitle"]),
         Paragraph("回测结果仅用于研究，不代表未来收益。", styles["CJKBody"]),
         Spacer(1, 8),
+        *([Paragraph("研究备注", styles["CJKHeading"]), Paragraph(report_note, styles["CJKBody"])] if report_note else []),
         Paragraph("核心指标", styles["CJKHeading"]),
         _pdf_table(
             [["指标", "数值"],

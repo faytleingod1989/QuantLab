@@ -201,7 +201,9 @@ function ComparisonPanel({ comparisons }) {
               <tr key={item.id}>
                 <td>{item.strategy}</td>
                 <td>{item.start_date} ~ {item.end_date}</td>
-                <td className={item.total_return >= 0 ? "positive" : "negative"}>{formatPercent(item.total_return)}</td>
+                <td className={item.total_return >= 0 ? "positive" : "negative"}>
+                  <div className="compare-bar"><i style={{ width: `${Math.min(Math.abs(item.total_return) * 100, 100)}%` }} />{formatPercent(item.total_return)}</div>
+                </td>
                 <td className={item.annual_return >= 0 ? "positive" : "negative"}>{formatPercent(item.annual_return)}</td>
                 <td className="negative">{formatPercent(item.max_drawdown)}</td>
                 <td>{Number(item.sharpe || 0).toFixed(2)}</td>

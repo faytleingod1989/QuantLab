@@ -56,7 +56,7 @@ def test_render_markdown_report_contains_metrics_quality_and_trades():
         {
             "id": "run-1",
             "status": "completed",
-            "config": {"signal_price_mode": "adjusted"},
+            "config": {"signal_price_mode": "adjusted", "report_note": "测试备注"},
             "result": {
                 "strategy": "均线策略",
                 "period": {"start": "2024-01-01", "end": "2024-12-31"},
@@ -91,6 +91,7 @@ def test_render_markdown_report_contains_metrics_quality_and_trades():
     assert "# QuantLab 回测报告：均线策略" in report
     assert "adjustment_continuity" in report
     assert "600519.SH" in report
+    assert "研究备注" in report
 
 
 def test_render_html_report_contains_svg_and_order_events():
@@ -111,7 +112,7 @@ def _sample_record():
     return {
         "id": "abc",
         "status": "completed",
-        "config": {"strategy": {"name": "均线多头"}, "start_date": "2024-01-01", "end_date": "2024-01-31"},
+        "config": {"strategy": {"name": "均线多头"}, "start_date": "2024-01-01", "end_date": "2024-01-31", "report_note": "测试备注"},
         "result": {
             "strategy": "均线多头",
             "period": {"start": "2024-01-01", "end": "2024-01-31"},

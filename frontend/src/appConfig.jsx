@@ -33,6 +33,7 @@ export const initialSettings = {
   benchmark: "000300.SH",
   frequency: "1d",
   signal_price_mode: "unadjusted",
+  report_note: "",
   strategy: {
     name: "均线多头策略",
     buy_logic: "all",

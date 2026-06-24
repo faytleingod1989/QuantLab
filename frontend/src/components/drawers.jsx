@@ -102,6 +102,9 @@ export function SettingsDrawer({ settings, setSettings, onRun, onCancel, running
           </select>
         </SettingRow>
         <SettingRow label="撮合价格口径"><span className="static-value">未复权开盘/收盘</span></SettingRow>
+        <SettingRow label="报告批注">
+          <textarea value={settings.report_note || ""} maxLength={1000} onChange={(event) => update("report_note", event.target.value)} placeholder="记录本次回测假设、观察或复盘结论" />
+        </SettingRow>
         <small className="hint">真实行情和 CSV 会先固化为带指纹的数据集；可用复权价算信号，但撮合、现金和费用始终使用未复权价格。</small>
       </section>
       <div className="task-actions">

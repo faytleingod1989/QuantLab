@@ -59,6 +59,7 @@ class BacktestRequest(BaseModel):
     benchmark: str = "000300.SH"
     frequency: Literal["1d"] = "1d"
     signal_price_mode: Literal["unadjusted", "adjusted"] = "unadjusted"
+    report_note: str = Field(default="", max_length=1000)
     strategy: VisualStrategy = Field(default_factory=VisualStrategy)
 
     @model_validator(mode="after")
