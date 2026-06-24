@@ -149,6 +149,27 @@ function App() {
     }
   };
 
+  const importIndustryHistory = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setImporting(true);
+    try {
+      const response = await fetch(`${API}/securities/industry-history/csv`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ csv_text: await file.text() }),
+      });
+      if (!response.ok) throw new Error((await response.json()).detail || "行业历史导入失败");
+      const result = await response.json();
+      setNotice(`行业历史已导入：${result.count} 条`);
+    } catch (error) {
+      setNotice(`行业历史导入失败：${errorMessage(error)}`);
+    } finally {
+      setImporting(false);
+      event.target.value = "";
+    }
+  };
+
   const syncAkshare = async () => {
     setSyncing(true);
     setNotice("");
@@ -387,6 +408,7 @@ function App() {
           source={source}
           datasets={datasets}
           onImport={importCsv}
+          onImportIndustryHistory={importIndustryHistory}
           importing={importing}
           onSync={syncAkshare}
           syncing={syncing}

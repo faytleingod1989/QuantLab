@@ -338,6 +338,40 @@ def load_csv_text(content: str) -> pd.DataFrame:
     return prepare_market_frame(pd.read_csv(StringIO(content)))
 
 
+def load_industry_history_csv_text(content: str) -> list[dict]:
+    frame = pd.read_csv(StringIO(content))
+    frame.columns = [str(column).strip().lower() for column in frame.columns]
+    required = {"symbol", "valid_from", "industry"}
+    missing = required - set(frame.columns)
+    if missing:
+        raise ValueError(f"行业历史 CSV 缺少字段: {', '.join(sorted(missing))}")
+    frame["symbol"] = frame["symbol"].map(normalize_symbol)
+    frame["valid_from"] = pd.to_datetime(frame["valid_from"], errors="coerce")
+    if frame["valid_from"].isna().any():
+        raise ValueError("行业历史 CSV 包含无法识别的生效日期")
+    frame["industry"] = frame["industry"].fillna("").astype(str).str.strip()
+    if (frame["industry"] == "").any():
+        raise ValueError("行业历史 CSV 包含空行业名称")
+    if "board" not in frame:
+        frame["board"] = frame["symbol"].map(infer_board)
+    else:
+        frame["board"] = frame["board"].fillna("").astype(str).str.strip()
+        empty_board = frame["board"] == ""
+        frame.loc[empty_board, "board"] = frame.loc[empty_board, "symbol"].map(infer_board)
+    records = []
+    for _, row in frame.drop_duplicates(["symbol", "valid_from"], keep="last").iterrows():
+        records.append(
+            {
+                "symbol": row["symbol"],
+                "valid_from": str(row["valid_from"].date()),
+                "industry": row["industry"],
+                "board": row["board"],
+                "source": "industry_history_csv",
+            }
+        )
+    return sorted(records, key=lambda item: (item["symbol"], item["valid_from"]))
+
+
 def filter_to_trading_calendar(
     frame: pd.DataFrame,
     start_date: str | None = None,

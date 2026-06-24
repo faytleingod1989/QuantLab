@@ -6,6 +6,7 @@ from backend.data import (
     fetch_akshare_security_master,
     fetch_akshare_dataset,
     filter_to_trading_calendar,
+    load_industry_history_csv_text,
     load_dataset_view,
     prepare_market_frame,
 )
@@ -322,6 +323,30 @@ def test_suspended_string_false_is_not_truthy():
         )
     )
     assert not bool(frame.iloc[0]["suspended"])
+
+
+def test_industry_history_csv_normalizes_records():
+    records = load_industry_history_csv_text(
+        "symbol,valid_from,industry,board\n"
+        "600519,2001-08-27,食品饮料,沪市主板\n"
+        "300750.SZ,2018-06-11,电力设备,\n"
+    )
+    assert records == [
+        {
+            "symbol": "300750.SZ",
+            "valid_from": "2018-06-11",
+            "industry": "电力设备",
+            "board": "创业板",
+            "source": "industry_history_csv",
+        },
+        {
+            "symbol": "600519.SH",
+            "valid_from": "2001-08-27",
+            "industry": "食品饮料",
+            "board": "沪市主板",
+            "source": "industry_history_csv",
+        },
+    ]
 
 
 def test_daily_status_marks_long_suspension_after_threshold():

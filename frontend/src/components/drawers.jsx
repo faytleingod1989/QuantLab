@@ -218,6 +218,7 @@ export function DataDrawer({
   source,
   datasets,
   onImport,
+  onImportIndustryHistory,
   importing,
   onSync,
   syncing,
@@ -259,6 +260,10 @@ export function DataDrawer({
             <label className="csv-upload">
               <input type="file" accept=".csv,text/csv" onChange={onImport} disabled={importing} />
               {importing ? "正在校验…" : "导入 CSV"}
+            </label>
+            <label className="csv-upload">
+              <input type="file" accept=".csv,text/csv" onChange={onImportIndustryHistory} disabled={importing} />
+              行业历史
             </label>
           </div>
           <button className="icon-button" onClick={close} aria-label="关闭"><X size={20} /></button>

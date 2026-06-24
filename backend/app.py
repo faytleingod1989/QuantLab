@@ -26,6 +26,7 @@ from .data import (
     load_csv,
     load_csv_text,
     load_dataset_view,
+    load_industry_history_csv_text,
     normalize_symbol,
     prepare_market_frame,
     sample_daily,
@@ -36,6 +37,7 @@ from .models import (
     BacktestRequest,
     AkshareDatasetRequest,
     CsvDatasetRequest,
+    IndustryHistoryCsvRequest,
     ProjectCreate,
     StrategyCreate,
     StrategyVersionCreate,
@@ -159,6 +161,16 @@ async def sync_security_master() -> dict:
         "status_counts": status_counts,
         "exchange_counts": exchange_counts,
     }
+
+
+@app.post("/api/securities/industry-history/csv", status_code=201)
+def import_industry_history_csv(payload: IndustryHistoryCsvRequest) -> dict:
+    try:
+        records = load_industry_history_csv_text(payload.csv_text)
+    except (ValueError, UnicodeError) as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    repository.upsert_industry_history(records)
+    return {"source": "industry_history_csv", "count": len(records)}
 
 
 @app.get("/api/securities/{symbol}/status")
