@@ -63,7 +63,18 @@ function PageCard({ title, value, note, action }) {
   );
 }
 
-function DataCenterPage({ datasets, securities, settings, datasetQuality, source, openData }) {
+function DataCenterPage({
+  datasets,
+  securities,
+  settings,
+  datasetQuality,
+  source,
+  openData,
+  onSyncAll,
+  syncingAll,
+  onSelectDataset,
+  onDeleteDataset,
+}) {
   const selectedDataset = datasets.find((item) => item.id === settings.dataset_id);
   return (
     <section className="view-page">
@@ -71,9 +82,14 @@ function DataCenterPage({ datasets, securities, settings, datasetQuality, source
         <div>
           <span>DATA CENTER</span>
           <h2>管理回测数据，而不是只弹一个选择框</h2>
-          <p>这里集中展示行情快照、证券主表和质量检查；需要导入、同步或删除时再进入数据管理。</p>
+          <p>这里集中展示行情快照、证券主表和质量检查；常用的选择、删除、全 A 同步可以直接在主页面完成。</p>
         </div>
-        <button className="primary" onClick={openData}>打开数据管理</button>
+        <div className="view-actions">
+          <button className="ghost" onClick={onSyncAll} disabled={!source?.akshare_available || syncingAll}>
+            {syncingAll ? "全A同步中…" : "同步沪深全A"}
+          </button>
+          <button className="primary" onClick={openData}>打开数据管理</button>
+        </div>
       </div>
       <div className="page-card-grid">
         <PageCard title="数据快照" value={`${datasets.length} 个`} note={selectedDataset ? `当前：${selectedDataset.name}` : "当前使用演示数据"} />
@@ -82,10 +98,21 @@ function DataCenterPage({ datasets, securities, settings, datasetQuality, source
         <PageCard title="质量检查" value={`${datasetQuality?.quality_checks?.length || 0} 项`} note={settings.dataset_id ? "固定快照质量记录" : "演示数据暂无固定检查"} />
       </div>
       <div className="view-panel">
-        <div className="panel-head"><b>最近数据集</b><span>可在数据管理中删除旧快照</span></div>
+        <div className="panel-head"><b>最近数据集</b><span>可直接选择或删除旧快照；重复同步会复用相同指纹快照</span></div>
         <div className="mini-list">
           {datasets.length ? datasets.slice(0, 6).map((dataset) => (
-            <span key={dataset.id}><b>{dataset.name}</b><small>{dataset.symbol_count} 标的 · {dataset.row_count} 行 · {dataset.start_date} — {dataset.end_date}</small></span>
+            <div key={dataset.id} className={`dataset-row-mini ${settings.dataset_id === dataset.id ? "selected" : ""}`}>
+              <span>
+                <b>{dataset.name}</b>
+                <small>{dataset.source === "akshare_all" ? "沪深全A" : dataset.source === "akshare" ? "AkShare" : "CSV"} · {dataset.symbol_count} 标的 · {dataset.row_count} 行 · {dataset.start_date} — {dataset.end_date}</small>
+              </span>
+              <div>
+                <button className="ghost" onClick={() => onSelectDataset(dataset)} disabled={settings.dataset_id === dataset.id}>
+                  {settings.dataset_id === dataset.id ? "使用中" : "选择"}
+                </button>
+                <button className="danger-ghost" onClick={() => onDeleteDataset(dataset)}>删除</button>
+              </div>
+            </div>
           )) : <em>暂无固定数据快照，可打开数据管理同步沪深全 A 或导入 CSV。</em>}
         </div>
       </div>
@@ -602,7 +629,20 @@ function App() {
   const [viewTitle, viewSubtitle] = VIEW_META[activeView] || VIEW_META.backtest;
   const renderMainView = () => {
     if (activeView === "data") {
-      return <DataCenterPage datasets={datasets} securities={securities} settings={settings} datasetQuality={datasetQuality} source={source} openData={() => setDrawer("data")} />;
+      return (
+        <DataCenterPage
+          datasets={datasets}
+          securities={securities}
+          settings={settings}
+          datasetQuality={datasetQuality}
+          source={source}
+          openData={() => setDrawer("data")}
+          onSyncAll={() => syncAkshare("all")}
+          syncingAll={syncingAll}
+          onSelectDataset={selectDataset}
+          onDeleteDataset={deleteDataset}
+        />
+      );
     }
     if (activeView === "strategy") {
       return <StrategyResearchPage settings={settings} strategyRecord={strategyRecord} openStrategy={() => setDrawer("strategy")} />;
