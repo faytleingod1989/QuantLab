@@ -206,23 +206,97 @@ function ReportsPage({ result, onExportReport }) {
   );
 }
 
-function RoadmapPage({ kind }) {
-  const copy = kind === "factors"
-    ? ["因子分析", "这里将承载因子库、因子筛选、IC/分层回测和信号解释。"]
-    : ["组合管理", "这里将承载组合约束、持仓、行业暴露和调仓计划。"];
+const indicatorLabels = {
+  ma_cross: "均线交叉",
+  price_vs_ma: "价格均线",
+  rsi: "RSI",
+  macd: "MACD",
+  bollinger: "布林带",
+};
+
+const operatorLabels = {
+  cross_above: "上穿",
+  cross_below: "下穿",
+  above: "高于",
+  below: "低于",
+};
+
+function describeCondition(condition) {
+  if (!condition) return "未配置";
+  const indicator = indicatorLabels[condition.indicator] || condition.indicator || "未知指标";
+  const operator = operatorLabels[condition.operator] || condition.operator || "条件";
+  const left = condition.left ?? "-";
+  const right = condition.right ?? "-";
+  const threshold = condition.threshold ?? "-";
+  if (condition.indicator === "rsi") return `${indicator}(${left}) ${operator} ${threshold}`;
+  if (condition.indicator === "macd") return `${indicator}(${left}, ${right}, ${threshold}) ${operator}`;
+  if (condition.indicator === "bollinger") return `${indicator}(${left}, ${threshold}) ${operator}`;
+  return `${indicator}(${left}, ${right}) ${operator}`;
+}
+
+function FactorAnalysisPage({ settings, result, openStrategy }) {
+  const buy = settings.strategy.buy_conditions?.[0];
+  const sell = settings.strategy.sell_conditions?.[0];
+  const tradeCount = result?.metrics?.trade_count ?? 0;
   return (
     <section className="view-page">
       <div className="view-hero">
         <div>
-          <span>ROADMAP</span>
-          <h2>{copy[0]}</h2>
-          <p>{copy[1]}</p>
+          <span>FACTOR ANALYSIS</span>
+          <h2>当前策略信号拆解</h2>
+          <p>先把正在使用的规则因子讲清楚：买入、卖出、价格口径和后续可扩展的 IC/分层回测路线都集中在这里。</p>
+        </div>
+        <button className="primary" onClick={openStrategy}>编辑信号规则</button>
+      </div>
+      <div className="page-card-grid">
+        <PageCard title="买入信号" value={indicatorLabels[buy?.indicator] || "未配置"} note={describeCondition(buy)} />
+        <PageCard title="卖出信号" value={indicatorLabels[sell?.indicator] || "未配置"} note={describeCondition(sell)} />
+        <PageCard title="信号价格口径" value={settings.signal_price_mode === "adjusted" ? "复权收盘" : "未复权收盘"} note="撮合、现金和费用仍使用未复权价格" />
+        <PageCard title="最近交易次数" value={`${tradeCount} 笔`} note={result?.task_id ? `来自任务 ${result.task_id.slice(0, 8)}` : "完成回测后自动更新"} />
+      </div>
+      <div className="view-panel">
+        <div className="panel-head"><b>因子路线</b><span>从规则信号逐步扩展到因子研究</span></div>
+        <div className="analysis-list">
+          <span><b>1. 信号解释</b><small>展示当前买卖条件、参数和价格口径，便于复盘每次回测假设。</small></span>
+          <span><b>2. 样本覆盖</b><small>基于固定数据快照统计信号覆盖标的、有效交易日和缺失情况。</small></span>
+          <span><b>3. IC / 分层回测</b><small>后续可增加因子收益相关性、分组收益和行业中性分析。</small></span>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+function PortfolioManagementPage({ settings, result, datasets, securities, openSettings, openData }) {
+  const selectedDataset = datasets.find((item) => item.id === settings.dataset_id);
+  const selectedSecurityCount = settings.dataset_id ? selectedDataset?.symbol_count || settings.symbols.length : settings.symbols.length;
+  const rejectionStats = result?.order_rejections || {};
+  const rejectionCount = Object.values(rejectionStats).reduce((sum, value) => sum + Number(value || 0), 0);
+  return (
+    <section className="view-page">
+      <div className="view-hero">
+        <div>
+          <span>PORTFOLIO</span>
+          <h2>组合约束与股票池管理</h2>
+          <p>把资金、仓位、股票池和过滤器集中成一张组合控制面板；需要调整时再进入参数设置或数据中心。</p>
+        </div>
+        <div className="view-actions">
+          <button className="ghost" onClick={openData}>管理股票池</button>
+          <button className="primary" onClick={openSettings}>参数设置</button>
         </div>
       </div>
       <div className="page-card-grid">
-        <PageCard title="当前状态" value="规划中" note="菜单已成为真实页面，不再只是 toast 提示" />
-        <PageCard title="下一步" value="补业务模块" note="根据你的优先级继续开发" />
-        <PageCard title="数据依赖" value="复用回测数据集" note="全 A 快照可作为后续输入" />
+        <PageCard title="初始资金" value={`${Number(settings.initial_cash || 0).toLocaleString("zh-CN")} 元`} note="回测账户起始现金" />
+        <PageCard title="组合最大仓位" value={`${Math.round((settings.max_position || 0) * 100)}%`} note={`单标的上限 ${Math.round((settings.max_symbol_position || 0) * 100)}%`} />
+        <PageCard title="候选股票池" value={`${selectedSecurityCount} 只`} note={selectedDataset ? `来自 ${selectedDataset.name}` : `当前主表 ${securities.length} 只`} />
+        <PageCard title="拒单统计" value={`${rejectionCount} 次`} note={result?.task_id ? "来自最近回测结果" : "完成回测后展示涨跌停/资金不足等拒单"} />
+      </div>
+      <div className="view-panel">
+        <div className="panel-head"><b>组合控制规则</b><span>当前回测请求中已生效的约束</span></div>
+        <div className="analysis-list">
+          <span><b>调仓周期</b><small>每 {settings.rebalance_days || 1} 个交易日评估一次买入候选；T+1 和整手交易规则保持开启。</small></span>
+          <span><b>股票池过滤</b><small>{settings.exclude_st === false ? "允许 ST" : "排除 ST"}，最少上市 {settings.min_listed_days || 0} 天，20 日均成交额不低于 {Number(settings.min_average_amount || 0).toLocaleString("zh-CN")}。</small></span>
+          <span><b>止盈止损</b><small>止损 {Math.round((settings.stop_loss_pct || 0) * 100)}%，止盈 {Math.round((settings.take_profit_pct || 0) * 100)}%，触发后会在交易记录中暴露卖出原因。</small></span>
+        </div>
       </div>
     </section>
   );
@@ -653,8 +727,20 @@ function App() {
     if (activeView === "reports") {
       return <ReportsPage result={result} onExportReport={exportReport} />;
     }
-    if (activeView === "factors" || activeView === "portfolio") {
-      return <RoadmapPage kind={activeView} />;
+    if (activeView === "factors") {
+      return <FactorAnalysisPage settings={settings} result={result} openStrategy={() => setDrawer("strategy")} />;
+    }
+    if (activeView === "portfolio") {
+      return (
+        <PortfolioManagementPage
+          settings={settings}
+          result={result}
+          datasets={datasets}
+          securities={securities}
+          openSettings={() => setDrawer("settings")}
+          openData={() => setDrawer("data")}
+        />
+      );
     }
     if (activeView === "settings") {
       return <SystemSettingsPage source={source} openSettings={() => setDrawer("settings")} />;
