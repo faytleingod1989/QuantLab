@@ -192,6 +192,7 @@ function ReportsPage({ result, onExportReport }) {
           <p>报告管理现在有独立页面。完成回测后可导出 HTML、PDF，Markdown 接口保留在后端。</p>
         </div>
         <div className="view-actions">
+          <button className="ghost" onClick={() => onExportReport("md")} disabled={!result?.task_id}>Markdown</button>
           <button className="ghost" onClick={() => onExportReport("html")} disabled={!result?.task_id}>HTML 报告</button>
           <button className="primary" onClick={() => onExportReport("pdf")} disabled={!result?.task_id}>PDF</button>
         </div>
@@ -200,7 +201,7 @@ function ReportsPage({ result, onExportReport }) {
         <PageCard title="最近任务" value={result?.task_id ? result.task_id.slice(0, 8) : "暂无"} note={result ? result.period ? `${result.period.start} — ${result.period.end}` : "已完成回测" : "先运行一次回测后再导出"} />
         <PageCard title="HTML" value="在线报告" note="含指标卡、权益曲线和交易记录" />
         <PageCard title="PDF" value="离线归档" note="适合投研复盘和分享" />
-        <PageCard title="Markdown" value="后端可用" note="后续可在页面补下载入口" />
+        <PageCard title="Markdown" value="复盘草稿" note="适合继续编辑、复制到投研文档或版本库归档" />
       </div>
     </section>
   );
