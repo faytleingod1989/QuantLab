@@ -21,6 +21,7 @@ class RuleCondition(BaseModel):
         "body_amplitude",
         "price_ma_deviation",
         "volume_return_spike",
+        "life_line_watch",
     ] = "ma_cross"
     operator: Literal["cross_above", "cross_below", "above", "below"] = "cross_above"
     left: int = Field(default=20, ge=1, le=500)
@@ -72,6 +73,20 @@ class RuleCondition(BaseModel):
                 raise ValueError("倍率/阈值必须大于 0")
         if self.indicator == "volume_return_spike" and self.lower is None:
             self.lower = 0.07
+        if self.indicator == "life_line_watch":
+            if self.left == 20 and self.right == 60 and self.threshold == 50:
+                self.right = 10
+                self.threshold = 3
+            if self.lower is None:
+                self.lower = -0.01
+            if self.upper is None:
+                self.upper = 1.8
+            if self.right < 2:
+                raise ValueError("生命线风控均量周期必须大于 1")
+            if self.threshold < 1:
+                raise ValueError("生命线观察天数必须至少为 1")
+            if self.upper <= 0:
+                raise ValueError("生命线放量倍率必须大于 0")
         return self
 
 

@@ -69,7 +69,7 @@ export const controlPullbackTemplate = {
   sell_conditions: [
     { indicator: "volume_return_spike", operator: "above", left: 10, right: 60, threshold: 3, lower: 0.07 },
     { indicator: "price_ma_deviation", operator: "below", left: 10, right: 60, threshold: 0.97 },
-    { indicator: "price_ma_deviation", operator: "below", left: 20, right: 60, threshold: 1 },
+    { indicator: "life_line_watch", operator: "below", left: 20, right: 10, threshold: 3, lower: -0.01, upper: 1.8 },
   ],
 };
 

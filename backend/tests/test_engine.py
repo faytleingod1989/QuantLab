@@ -305,6 +305,55 @@ def test_candidate_sort_and_max_hold_limit_select_lowest_recent_return():
     assert any("最多持有 2 只" in item for item in result["assumptions"])
 
 
+def test_life_line_watch_sells_after_three_light_break_days():
+    dates = pd.bdate_range("2024-01-02", periods=30)
+    close = np.array([10.0] * 22 + [9.95, 9.9, 9.85, 9.8, 9.9, 10.0, 10.1, 10.2])
+    volume = np.array([1000] * 22 + [900, 880, 860, 850, 900, 1000, 1000, 1000])
+    frame = pd.DataFrame(
+        {
+            "trade_date": dates,
+            "symbol": "AAA.SH",
+            "name": "AAA.SH",
+            "open": close,
+            "high": close + 0.1,
+            "low": close - 0.1,
+            "close": close,
+            "prev_close": np.r_[close[0], close[:-1]],
+            "volume": volume,
+            "amount": close * volume,
+            "limit_up": close + 1.0,
+            "limit_down": np.maximum(close - 1.0, 0.01),
+            "suspended": [False] * len(close),
+        }
+    )
+    request = BacktestRequest(
+        symbols=["AAA.SH"],
+        start_date="2024-01-02",
+        end_date="2024-02-12",
+        max_symbol_position=0.5,
+        strategy=VisualStrategy(
+            buy_conditions=[
+                RuleCondition(indicator="return_between", left=1, lower=-1, upper=1)
+            ],
+            sell_conditions=[
+                RuleCondition(
+                    indicator="life_line_watch",
+                    operator="below",
+                    left=20,
+                    right=10,
+                    threshold=3,
+                    lower=-0.01,
+                    upper=1.8,
+                )
+            ],
+        ),
+    )
+    result = run_backtest({"AAA.SH": frame}, request)
+    sell_trades = [trade for trade in result["trades"] if trade["side"] == "卖出"]
+    assert len(sell_trades) == 1
+    assert "观察3天" in sell_trades[0]["reason"]
+
+
 def test_stock_pool_filter_excludes_st_buy_candidates():
     frame = _cross_frame("AAA.SH")
     frame["name"] = "ST测试"

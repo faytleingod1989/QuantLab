@@ -106,6 +106,8 @@ def _condition(frame: pd.DataFrame, rule: RuleCondition) -> pd.Series:
         volume_spike = volume > volume.rolling(rule.left).mean() * float(rule.threshold)
         daily_return = close / close.shift(1) - 1
         return volume_spike & (daily_return > float(rule.lower or 0.07))
+    if rule.indicator == "life_line_watch":
+        return pd.Series(False, index=frame.index)
     if rule.indicator == "return_between":
         lookback = max(1, int(rule.left))
         returns = close / close.shift(lookback) - 1
@@ -192,6 +194,67 @@ def _candidate_score(frame: pd.DataFrame, signal_date, request: BacktestRequest)
     return current / previous - 1
 
 
+def _stateful_sell_rules(request: BacktestRequest) -> list[RuleCondition]:
+    return [
+        rule
+        for rule in request.strategy.sell_conditions
+        if rule.indicator == "life_line_watch"
+    ]
+
+
+def _stateless_sell_rules(request: BacktestRequest) -> list[RuleCondition]:
+    return [
+        rule
+        for rule in request.strategy.sell_conditions
+        if rule.indicator != "life_line_watch"
+    ]
+
+
+def _evaluate_life_line_watch(
+    frame: pd.DataFrame,
+    signal_date,
+    rule: RuleCondition,
+    watched_days: int,
+) -> tuple[bool, int, str]:
+    dates = frame.index[frame.index <= signal_date]
+    min_bars = max(int(rule.left), int(rule.right), 2) + 1
+    if len(dates) < min_bars:
+        return False, watched_days, ""
+    current = frame.loc[dates].copy()
+    close = current["signal_close"] if "signal_close" in current else current["close"]
+    volume = pd.to_numeric(current["volume"], errors="coerce").fillna(0)
+    life_line = close.rolling(int(rule.left)).mean().iloc[-1]
+    volume_ma = volume.rolling(int(rule.right)).mean().iloc[-1]
+    current_close = float(close.iloc[-1])
+    previous_close = float(close.iloc[-2])
+    current_volume = float(volume.iloc[-1])
+    if life_line <= 0 or previous_close <= 0 or volume_ma <= 0:
+        return False, watched_days, ""
+
+    line_name = f"MA{int(rule.left)}"
+    break_line = current_close < float(life_line)
+    today_return = current_close / previous_close - 1
+    heavy_break = break_line and current_volume > volume_ma * float(rule.upper or 1.8)
+    light_small_break = (
+        break_line
+        and current_volume < volume_ma
+        and today_return > float(rule.lower if rule.lower is not None else -0.01)
+    )
+
+    if heavy_break:
+        return True, 0, f"生命线风控：放量跌破{line_name}，强制离场"
+    if not break_line:
+        return False, 0, ""
+    if not light_small_break:
+        return True, 0, f"生命线风控：跌破{line_name}，直接离场"
+
+    next_watched_days = watched_days + 1
+    observe_days = max(1, int(rule.threshold))
+    if next_watched_days >= observe_days:
+        return True, 0, f"生命线风控：观察{observe_days}天仍未站回{line_name}，离场"
+    return False, next_watched_days, f"生命线风控：缩量小阴跌破{line_name}，观察第{next_watched_days}天"
+
+
 def _round(value: float) -> float:
     return round(float(value), 4)
 
@@ -224,7 +287,7 @@ def run_backtest(
             current, request.strategy.buy_conditions, request.strategy.buy_logic
         )
         current["sell_signal"] = _combine(
-            current, request.strategy.sell_conditions, request.strategy.sell_logic
+            current, _stateless_sell_rules(request), request.strategy.sell_logic
         )
         amount = current["amount"] if "amount" in current else current["volume"] * current["close"]
         current["average_amount_20"] = pd.to_numeric(amount, errors="coerce").fillna(0).rolling(20, min_periods=1).mean()
@@ -239,6 +302,8 @@ def run_backtest(
     equity_curve: list[dict] = []
     trades: list[dict] = []
     order_events: list[dict] = []
+    life_line_watch_days = {symbol: 0 for symbol in prepared}
+    life_line_rules = _stateful_sell_rules(request)
 
     for date_index, date in enumerate(all_dates):
         if cancel_check and cancel_check():
@@ -277,6 +342,19 @@ def run_backtest(
                     elif can_rebalance and bool(previous["sell_signal"]):
                         sell_candidates.append(symbol)
                         sell_reasons[symbol] = "卖出信号"
+                    elif can_rebalance and life_line_rules:
+                        for rule in life_line_rules:
+                            should_sell, next_watch_days, reason = _evaluate_life_line_watch(
+                                frame,
+                                previous_date,
+                                rule,
+                                life_line_watch_days.get(symbol, 0),
+                            )
+                            life_line_watch_days[symbol] = next_watch_days
+                            if should_sell:
+                                sell_candidates.append(symbol)
+                                sell_reasons[symbol] = reason
+                                break
                 elif can_rebalance and bool(previous["buy_signal"]):
                     passed, reason = _passes_stock_filters(previous, request, previous_date)
                     if passed:
@@ -319,6 +397,7 @@ def run_backtest(
                 }
             )
             positions[symbol] = Position()
+            life_line_watch_days[symbol] = 0
 
         max_new_positions = len(buy_candidates)
         if request.strategy.max_hold_num:
@@ -376,6 +455,7 @@ def run_backtest(
                 unsettled=quantity,
                 average_cost=(value + fees) / quantity,
             )
+            life_line_watch_days[symbol] = 0
             trades.append(
                 {
                     "date": str(date.date()),

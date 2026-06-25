@@ -134,6 +134,7 @@ const indicatorOptions = [
   ["body_amplitude", "实体振幅"],
   ["price_ma_deviation", "价格偏离均线"],
   ["volume_return_spike", "放量大阳"],
+  ["life_line_watch", "生命线观察"],
 ];
 
 const operatorOptions = [
@@ -157,6 +158,7 @@ export const indicatorDefaults = {
   body_amplitude: { left: 10, right: 60, threshold: 0.1 },
   price_ma_deviation: { left: 10, right: 60, threshold: 1.02 },
   volume_return_spike: { left: 10, right: 60, threshold: 3, lower: 0.07 },
+  life_line_watch: { left: 20, right: 10, threshold: 3, lower: -0.01, upper: 1.8 },
 };
 
 export function updateRuleConditionValue(condition, key, value) {
@@ -179,6 +181,7 @@ function RuleNode({ title, tone, condition, onChange, onRemove }) {
     body_amplitude: "最大实体阈值",
     price_ma_deviation: "均线倍率",
     volume_return_spike: "放量倍率",
+    life_line_watch: "观察天数",
   }[indicator];
   const leftLabel = {
     volume_vs_ma: "均量周期",
@@ -188,12 +191,20 @@ function RuleNode({ title, tone, condition, onChange, onRemove }) {
     body_amplitude: "统计窗口",
     price_ma_deviation: "均线周期",
     volume_return_spike: "均量周期",
+    life_line_watch: "生命线周期",
     bollinger: "周期",
     rsi: "RSI周期",
   }[indicator] || "短周期";
+  const rightLabel = indicator === "life_line_watch" ? "均量周期" : "长周期";
   const showRight = !["price_vs_ma", "rsi", "bollinger", "volume_vs_ma", "return_between", "kline_up_ratio", "body_amplitude", "price_ma_deviation", "volume_return_spike"].includes(indicator);
-  const showRange = indicator === "return_between";
+  const showRange = ["return_between", "life_line_watch"].includes(indicator);
   const showLower = indicator === "volume_return_spike";
+  const rangeLabels = {
+    life_line_watch: ["小阴跌幅下限", "放量倍率"],
+  }[indicator] || ["下限", "上限"];
+  const rangeDefaults = {
+    life_line_watch: [-0.01, 1.8],
+  }[indicator] || [-0.01, 0.05];
   return (
     <div className={`rule-node ${tone}`}>
       <div className="rule-node-title">
@@ -212,7 +223,7 @@ function RuleNode({ title, tone, condition, onChange, onRemove }) {
       <input type="number" value={condition.left} onChange={(event) => onChange("left", event.target.value)} />
       {showRight ? (
         <>
-          <span>长周期</span>
+          <span>{rightLabel}</span>
           <input type="number" value={condition.right} onChange={(event) => onChange("right", event.target.value)} />
         </>
       ) : null}
@@ -224,10 +235,10 @@ function RuleNode({ title, tone, condition, onChange, onRemove }) {
       ) : null}
       {showRange ? (
         <>
-          <span>下限</span>
-          <input type="number" step="0.01" value={condition.lower ?? -0.01} onChange={(event) => onChange("lower", event.target.value)} />
-          <span>上限</span>
-          <input type="number" step="0.01" value={condition.upper ?? 0.05} onChange={(event) => onChange("upper", event.target.value)} />
+          <span>{rangeLabels[0]}</span>
+          <input type="number" step="0.01" value={condition.lower ?? rangeDefaults[0]} onChange={(event) => onChange("lower", event.target.value)} />
+          <span>{rangeLabels[1]}</span>
+          <input type="number" step="0.01" value={condition.upper ?? rangeDefaults[1]} onChange={(event) => onChange("upper", event.target.value)} />
         </>
       ) : null}
       {showLower ? (
