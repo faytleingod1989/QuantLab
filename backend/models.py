@@ -7,16 +7,37 @@ from pydantic import BaseModel, Field, model_validator
 
 
 class RuleCondition(BaseModel):
-    indicator: Literal["ma_cross", "price_vs_ma", "rsi", "macd", "bollinger"] = "ma_cross"
+    indicator: Literal[
+        "ma_cross",
+        "price_vs_ma",
+        "rsi",
+        "macd",
+        "bollinger",
+        "ma_stack",
+        "volume_vs_ma",
+        "volume_max_vs_ma",
+        "return_between",
+        "kline_up_ratio",
+        "body_amplitude",
+        "price_ma_deviation",
+        "volume_return_spike",
+    ] = "ma_cross"
     operator: Literal["cross_above", "cross_below", "above", "below"] = "cross_above"
-    left: int = Field(default=20, ge=2, le=500)
+    left: int = Field(default=20, ge=1, le=500)
     right: int = Field(default=60, ge=2, le=500)
-    threshold: float = Field(default=50, ge=0, le=100)
+    threshold: float = Field(default=50, ge=0, le=500)
+    lower: float | None = Field(default=None, ge=-10, le=10)
+    upper: float | None = Field(default=None, ge=-10, le=10)
 
     @model_validator(mode="after")
     def validate_indicator_parameters(self):
         if self.indicator in {"ma_cross", "macd"} and self.left >= self.right:
             raise ValueError("短周期必须小于长周期")
+        if self.indicator == "ma_stack":
+            if self.threshold == 50:
+                self.threshold = 60
+            if not (self.left < self.right < int(self.threshold)):
+                raise ValueError("均线排列必须满足短周期 < 中周期 < 长周期")
         if self.indicator == "macd":
             if self.left == 20 and self.right == 60 and self.threshold == 50:
                 self.left = 12
@@ -31,6 +52,26 @@ class RuleCondition(BaseModel):
                 raise ValueError("布林带标准差倍数必须大于 0 且不超过 10")
         if self.indicator == "rsi" and not 0 <= self.threshold <= 100:
             raise ValueError("RSI 阈值必须在 0 到 100 之间")
+        if self.indicator == "return_between":
+            if self.lower is None:
+                self.lower = -0.01
+            if self.upper is None:
+                self.upper = 0.05
+            if self.lower > self.upper:
+                raise ValueError("收益率区间下限不能大于上限")
+        if self.indicator == "price_ma_deviation" and self.threshold <= 0:
+            raise ValueError("价格均线偏离倍率必须大于 0")
+        if self.indicator in {
+            "volume_vs_ma",
+            "volume_max_vs_ma",
+            "kline_up_ratio",
+            "body_amplitude",
+            "volume_return_spike",
+        }:
+            if self.threshold <= 0:
+                raise ValueError("倍率/阈值必须大于 0")
+        if self.indicator == "volume_return_spike" and self.lower is None:
+            self.lower = 0.07
         return self
 
 
@@ -38,6 +79,10 @@ class VisualStrategy(BaseModel):
     name: str = "均线多头策略"
     buy_logic: Literal["all", "any"] = "all"
     sell_logic: Literal["all", "any"] = "any"
+    max_hold_num: int | None = Field(default=None, ge=1, le=200)
+    candidate_sort: Literal["none", "return_asc", "return_desc"] = "none"
+    sort_window: int = Field(default=20, ge=2, le=500)
+    position_sizing: Literal["cash_weight", "equal_weight"] = "cash_weight"
     buy_conditions: list[RuleCondition] = Field(
         default_factory=lambda: [
             RuleCondition(indicator="ma_cross", operator="cross_above", left=20, right=60)

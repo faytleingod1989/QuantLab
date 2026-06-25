@@ -75,6 +75,25 @@ def test_macd_and_bollinger_conditions_generate_boolean_signals():
     assert bollinger.dtype == bool
 
 
+def test_advanced_strategy_conditions_generate_expected_signals():
+    dates = pd.bdate_range("2024-01-02", periods=90)
+    close = pd.Series(np.linspace(10, 20, 90))
+    frame = pd.DataFrame(
+        {
+            "trade_date": dates,
+            "open": close * 0.995,
+            "close": close,
+            "signal_close": close,
+            "volume": [1000] * 80 + [500] * 10,
+        }
+    )
+    assert _condition(frame, RuleCondition(indicator="ma_stack", operator="above", left=10, right=20, threshold=60)).iloc[-1]
+    assert _condition(frame, RuleCondition(indicator="volume_vs_ma", operator="below", left=5, threshold=1.1)).iloc[-1]
+    assert _condition(frame, RuleCondition(indicator="kline_up_ratio", operator="above", left=10, threshold=1.5)).iloc[-1]
+    assert _condition(frame, RuleCondition(indicator="body_amplitude", operator="below", left=10, threshold=0.1)).iloc[-1]
+    assert _condition(frame, RuleCondition(indicator="price_ma_deviation", operator="below", left=10, threshold=1.05)).iloc[-1]
+
+
 def test_indicator_defaults_are_normalized_and_invalid_periods_rejected():
     macd = RuleCondition(indicator="macd")
     assert (macd.left, macd.right, macd.threshold) == (12, 26, 9)
@@ -233,6 +252,57 @@ def test_single_symbol_position_cap_limits_buy_value():
     result = run_backtest({"AAA.SH": _cross_frame("AAA.SH")}, request)
     buy_value = sum(trade["value"] for trade in result["trades"] if trade["side"] == "买入")
     assert buy_value <= request.initial_cash * request.max_symbol_position
+
+
+def _rank_frame(symbol: str, start: float, end: float) -> pd.DataFrame:
+    close = np.linspace(start, end, 25)
+    return pd.DataFrame(
+        {
+            "trade_date": pd.bdate_range("2024-01-02", periods=25),
+            "symbol": symbol,
+            "name": symbol,
+            "open": close,
+            "high": close + 0.1,
+            "low": close - 0.1,
+            "close": close,
+            "prev_close": np.r_[close[0], close[:-1]],
+            "volume": [1_000_000] * 25,
+            "amount": close * 1_000_000,
+            "limit_up": close + 1.0,
+            "limit_down": np.maximum(close - 1.0, 0.01),
+            "suspended": [False] * 25,
+        }
+    )
+
+
+def test_candidate_sort_and_max_hold_limit_select_lowest_recent_return():
+    symbols = ["AAA.SH", "BBB.SH", "CCC.SH"]
+    request = BacktestRequest(
+        symbols=symbols,
+        start_date="2024-01-02",
+        end_date="2024-02-05",
+        max_symbol_position=0.2,
+        strategy=VisualStrategy(
+            max_hold_num=2,
+            candidate_sort="return_asc",
+            sort_window=20,
+            buy_conditions=[
+                RuleCondition(indicator="return_between", left=20, lower=-1, upper=1)
+            ],
+            sell_conditions=[],
+        ),
+    )
+    result = run_backtest(
+        {
+            "AAA.SH": _rank_frame("AAA.SH", 10, 12),
+            "BBB.SH": _rank_frame("BBB.SH", 10, 11),
+            "CCC.SH": _rank_frame("CCC.SH", 10, 14),
+        },
+        request,
+    )
+    bought = {trade["symbol"] for trade in result["trades"] if trade["side"] == "买入"}
+    assert bought == {"AAA.SH", "BBB.SH"}
+    assert any("最多持有 2 只" in item for item in result["assumptions"])
 
 
 def test_stock_pool_filter_excludes_st_buy_candidates():

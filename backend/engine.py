@@ -48,6 +48,7 @@ def _rsi(series: pd.Series, period: int) -> pd.Series:
 
 def _condition(frame: pd.DataFrame, rule: RuleCondition) -> pd.Series:
     close = frame["signal_close"] if "signal_close" in frame else frame["close"]
+    volume = pd.to_numeric(frame.get("volume", pd.Series(0, index=frame.index)), errors="coerce").fillna(0)
     if rule.indicator == "ma_cross":
         left = close.rolling(rule.left).mean()
         right = close.rolling(rule.right).mean()
@@ -56,12 +57,20 @@ def _condition(frame: pd.DataFrame, rule: RuleCondition) -> pd.Series:
         if rule.operator == "cross_below":
             return (left < right) & (left.shift(1) >= right.shift(1))
         return left > right if rule.operator == "above" else left < right
+    if rule.indicator == "ma_stack":
+        short = close.rolling(rule.left).mean()
+        middle = close.rolling(rule.right).mean()
+        long = close.rolling(int(rule.threshold)).mean()
+        return (close > short) & (short > middle) & (middle > long)
     if rule.indicator == "price_vs_ma":
         moving = close.rolling(rule.left).mean()
         if rule.operator == "cross_above":
             return (close > moving) & (close.shift(1) <= moving.shift(1))
         if rule.operator == "cross_below":
             return (close < moving) & (close.shift(1) >= moving.shift(1))
+        return close > moving if rule.operator == "above" else close < moving
+    if rule.indicator == "price_ma_deviation":
+        moving = close.rolling(rule.left).mean() * float(rule.threshold)
         return close > moving if rule.operator == "above" else close < moving
     if rule.indicator == "macd":
         fast = close.ewm(span=rule.left, adjust=False).mean()
@@ -86,6 +95,29 @@ def _condition(frame: pd.DataFrame, rule: RuleCondition) -> pd.Series:
         if rule.operator == "cross_below":
             return (close < lower) & (close.shift(1) >= lower.shift(1))
         return close > upper if rule.operator == "above" else close < lower
+    if rule.indicator == "volume_vs_ma":
+        baseline = volume.rolling(rule.left).mean() * float(rule.threshold)
+        return volume > baseline if rule.operator == "above" else volume < baseline
+    if rule.indicator == "volume_max_vs_ma":
+        recent_max = volume.rolling(rule.left).max()
+        baseline = volume.rolling(rule.right).mean() * float(rule.threshold)
+        return recent_max > baseline if rule.operator == "above" else recent_max < baseline
+    if rule.indicator == "volume_return_spike":
+        volume_spike = volume > volume.rolling(rule.left).mean() * float(rule.threshold)
+        daily_return = close / close.shift(1) - 1
+        return volume_spike & (daily_return > float(rule.lower or 0.07))
+    if rule.indicator == "return_between":
+        lookback = max(1, int(rule.left))
+        returns = close / close.shift(lookback) - 1
+        return returns.between(float(rule.lower or 0), float(rule.upper or 0), inclusive="both")
+    if rule.indicator == "kline_up_ratio":
+        up_days = (frame["close"] > frame["open"]).rolling(rule.left).sum()
+        down_days = (frame["close"] < frame["open"]).rolling(rule.left).sum()
+        return up_days > down_days * float(rule.threshold)
+    if rule.indicator == "body_amplitude":
+        body = (frame["close"] - frame["open"]).abs() / frame["close"].replace(0, np.nan)
+        recent_max = body.rolling(rule.left).max()
+        return recent_max > rule.threshold if rule.operator == "above" else recent_max < rule.threshold
     value = _rsi(close, rule.left)
     if rule.operator == "cross_above":
         return (value > rule.threshold) & (value.shift(1) <= rule.threshold)
@@ -144,6 +176,20 @@ def _passes_stock_filters(row: pd.Series, request: BacktestRequest, signal_date)
     if request.min_average_amount and float(row.get("average_amount_20", 0) or 0) < request.min_average_amount:
         return False, "成交额不足"
     return True, ""
+
+
+def _candidate_score(frame: pd.DataFrame, signal_date, request: BacktestRequest) -> float:
+    if request.strategy.candidate_sort == "none":
+        return 0.0
+    window = max(1, int(request.strategy.sort_window))
+    dates = frame.index[frame.index <= signal_date]
+    if len(dates) <= window:
+        return 0.0
+    current = float(frame.loc[dates[-1], "signal_close"])
+    previous = float(frame.loc[dates[-1 - window], "signal_close"])
+    if previous <= 0:
+        return 0.0
+    return current / previous - 1
 
 
 def _round(value: float) -> float:
@@ -237,6 +283,12 @@ def run_backtest(
                         buy_candidates.append(symbol)
                     else:
                         order_events.append({"date": str(date.date()), "symbol": symbol, "reason": reason})
+            if request.strategy.candidate_sort != "none":
+                buy_candidates = sorted(
+                    buy_candidates,
+                    key=lambda symbol: _candidate_score(prepared[symbol], previous_date, request),
+                    reverse=request.strategy.candidate_sort == "return_desc",
+                )
 
         for symbol in sell_candidates:
             row = prepared[symbol].loc[date]
@@ -268,8 +320,14 @@ def run_backtest(
             )
             positions[symbol] = Position()
 
+        max_new_positions = len(buy_candidates)
+        if request.strategy.max_hold_num:
+            current_hold_count = sum(1 for position in positions.values() if position.quantity)
+            max_new_positions = max(0, request.strategy.max_hold_num - current_hold_count)
         active_buys = []
         for symbol in buy_candidates:
+            if len(active_buys) >= max_new_positions:
+                break
             row = prepared[symbol].loc[date]
             if bool(row.get("suspended", False)):
                 continue
@@ -457,6 +515,11 @@ def _summarize(
                 else "策略信号、撮合、估值、现金和费用均使用未复权价格"
             ),
             f"调仓周期 {request.rebalance_days} 个交易日；单标的仓位上限 {request.max_symbol_position:.0%}",
+            (
+                f"最多持有 {request.strategy.max_hold_num} 只；候选排序 {request.strategy.candidate_sort}({request.strategy.sort_window}日)"
+                if request.strategy.max_hold_num
+                else "未限制最大持股数量"
+            ),
             (
                 f"股票池过滤：排除 ST={request.exclude_st}，最少上市天数 {request.min_listed_days}，20日均成交额下限 {request.min_average_amount:,.0f}"
             ),

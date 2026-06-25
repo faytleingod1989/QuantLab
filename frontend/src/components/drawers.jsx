@@ -13,6 +13,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 
+import { controlPullbackTemplate } from "../appConfig";
 import { RateInput, SettingRow } from "./common";
 
 export function SettingsDrawer({ settings, setSettings, onRun, onCancel, running, progress, close }) {
@@ -125,6 +126,14 @@ const indicatorOptions = [
   ["rsi", "RSI"],
   ["macd", "MACD"],
   ["bollinger", "布林带"],
+  ["ma_stack", "均线多头排列"],
+  ["volume_vs_ma", "成交量/均量"],
+  ["volume_max_vs_ma", "区间最大量/均量"],
+  ["return_between", "区间收益率"],
+  ["kline_up_ratio", "阳线优势"],
+  ["body_amplitude", "实体振幅"],
+  ["price_ma_deviation", "价格偏离均线"],
+  ["volume_return_spike", "放量大阳"],
 ];
 
 const operatorOptions = [
@@ -140,6 +149,14 @@ export const indicatorDefaults = {
   rsi: { left: 14, right: 60, threshold: 50 },
   macd: { left: 12, right: 26, threshold: 9 },
   bollinger: { left: 20, right: 60, threshold: 2 },
+  ma_stack: { left: 10, right: 20, threshold: 60 },
+  volume_vs_ma: { left: 20, right: 60, threshold: 1.5 },
+  volume_max_vs_ma: { left: 20, right: 20, threshold: 3 },
+  return_between: { left: 1, right: 60, threshold: 50, lower: -0.01, upper: 0.05 },
+  kline_up_ratio: { left: 10, right: 60, threshold: 1.5 },
+  body_amplitude: { left: 10, right: 60, threshold: 0.1 },
+  price_ma_deviation: { left: 10, right: 60, threshold: 1.02 },
+  volume_return_spike: { left: 10, right: 60, threshold: 3, lower: 0.07 },
 };
 
 export function updateRuleConditionValue(condition, key, value) {
@@ -149,12 +166,40 @@ export function updateRuleConditionValue(condition, key, value) {
   return { ...condition, [key]: key === "operator" ? value : Number(value) };
 }
 
-function RuleNode({ title, tone, condition, onChange }) {
+function RuleNode({ title, tone, condition, onChange, onRemove }) {
   const indicator = condition.indicator || "ma_cross";
-  const thresholdLabel = indicator === "rsi" ? "阈值" : indicator === "macd" ? "信号周期" : indicator === "bollinger" ? "标准差倍数" : null;
+  const thresholdLabel = {
+    rsi: "阈值",
+    macd: "信号周期",
+    bollinger: "标准差倍数",
+    ma_stack: "长周期",
+    volume_vs_ma: "均量倍率",
+    volume_max_vs_ma: "最大量倍率",
+    kline_up_ratio: "阳/阴倍率",
+    body_amplitude: "最大实体阈值",
+    price_ma_deviation: "均线倍率",
+    volume_return_spike: "放量倍率",
+  }[indicator];
+  const leftLabel = {
+    volume_vs_ma: "均量周期",
+    volume_max_vs_ma: "统计窗口",
+    return_between: "收益窗口",
+    kline_up_ratio: "统计窗口",
+    body_amplitude: "统计窗口",
+    price_ma_deviation: "均线周期",
+    volume_return_spike: "均量周期",
+    bollinger: "周期",
+    rsi: "RSI周期",
+  }[indicator] || "短周期";
+  const showRight = !["price_vs_ma", "rsi", "bollinger", "volume_vs_ma", "return_between", "kline_up_ratio", "body_amplitude", "price_ma_deviation", "volume_return_spike"].includes(indicator);
+  const showRange = indicator === "return_between";
+  const showLower = indicator === "volume_return_spike";
   return (
     <div className={`rule-node ${tone}`}>
-      <b>{title}</b>
+      <div className="rule-node-title">
+        <b>{title}</b>
+        {onRemove ? <button type="button" onClick={onRemove}>删除</button> : null}
+      </div>
       <span>指标</span>
       <select value={indicator} onChange={(event) => onChange("indicator", event.target.value)}>
         {indicatorOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
@@ -163,9 +208,9 @@ function RuleNode({ title, tone, condition, onChange }) {
       <select value={condition.operator || "cross_above"} onChange={(event) => onChange("operator", event.target.value)}>
         {operatorOptions.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
       </select>
-      <span>{indicator === "bollinger" ? "周期" : indicator === "rsi" ? "RSI周期" : "短周期"}</span>
+      <span>{leftLabel}</span>
       <input type="number" value={condition.left} onChange={(event) => onChange("left", event.target.value)} />
-      {indicator !== "price_vs_ma" && indicator !== "rsi" && indicator !== "bollinger" ? (
+      {showRight ? (
         <>
           <span>长周期</span>
           <input type="number" value={condition.right} onChange={(event) => onChange("right", event.target.value)} />
@@ -177,23 +222,71 @@ function RuleNode({ title, tone, condition, onChange }) {
           <input type="number" value={condition.threshold} onChange={(event) => onChange("threshold", event.target.value)} />
         </>
       ) : null}
+      {showRange ? (
+        <>
+          <span>下限</span>
+          <input type="number" step="0.01" value={condition.lower ?? -0.01} onChange={(event) => onChange("lower", event.target.value)} />
+          <span>上限</span>
+          <input type="number" step="0.01" value={condition.upper ?? 0.05} onChange={(event) => onChange("upper", event.target.value)} />
+        </>
+      ) : null}
+      {showLower ? (
+        <>
+          <span>涨幅下限</span>
+          <input type="number" step="0.01" value={condition.lower ?? 0.07} onChange={(event) => onChange("lower", event.target.value)} />
+        </>
+      ) : null}
     </div>
   );
 }
 
 export function StrategyModal({ settings, setSettings, onSave, saving, versionInfo, close }) {
   const strategy = settings.strategy;
-  const updateCondition = (kind, key, value) =>
+  const updateCondition = (kind, targetIndex, key, value) =>
     setSettings((current) => ({
       ...current,
       strategy: {
         ...current.strategy,
         [kind]: current.strategy[kind].map((condition, index) =>
-          index === 0
+          index === targetIndex
             ? updateRuleConditionValue(condition, key, value)
             : condition
         ),
       },
+    }));
+  const addCondition = (kind) =>
+    setSettings((current) => ({
+      ...current,
+      strategy: {
+        ...current.strategy,
+        [kind]: [
+          ...current.strategy[kind],
+          { indicator: "price_vs_ma", operator: kind === "buy_conditions" ? "above" : "below", left: 20, right: 60, threshold: 50 },
+        ],
+      },
+    }));
+  const removeCondition = (kind, removeIndex) =>
+    setSettings((current) => ({
+      ...current,
+      strategy: {
+        ...current.strategy,
+        [kind]: current.strategy[kind].filter((_, index) => index !== removeIndex),
+      },
+    }));
+  const applyControlPullbackTemplate = () =>
+    setSettings((current) => ({
+      ...current,
+      max_symbol_position: 1 / controlPullbackTemplate.max_hold_num,
+      max_position: 1,
+      stop_loss_pct: 0.08,
+      take_profit_pct: 0,
+      exclude_st: true,
+      strategy: JSON.parse(JSON.stringify(controlPullbackTemplate)),
+    }));
+  const updateStrategyField = (field, value) =>
+    setSettings((current) => ({
+      ...current,
+      strategy: { ...current.strategy, [field]: value },
     }));
   return (
     <div className="modal-backdrop" onClick={(event) => event.target === event.currentTarget && close()}>
@@ -206,14 +299,54 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
           </div>
           <button className="icon-button" onClick={close}><X size={20} /></button>
         </div>
+        <div className="strategy-template-bar">
+          <button className="ghost" onClick={applyControlPullbackTemplate}>套用「主力控盘回踩策略」模板</button>
+          <label>最大持股<input type="number" min="1" max="200" value={strategy.max_hold_num || ""} onChange={(event) => updateStrategyField("max_hold_num", event.target.value ? Number(event.target.value) : null)} /></label>
+          <label>排序
+            <select value={strategy.candidate_sort || "none"} onChange={(event) => updateStrategyField("candidate_sort", event.target.value)}>
+              <option value="none">不排序</option>
+              <option value="return_asc">近N日涨幅升序</option>
+              <option value="return_desc">近N日涨幅降序</option>
+            </select>
+          </label>
+          <label>排序窗口<input type="number" min="2" max="500" value={strategy.sort_window || 20} onChange={(event) => updateStrategyField("sort_window", Number(event.target.value))} /></label>
+        </div>
         <div className="rule-flow">
           <div className="rule-node source"><Database size={21} /><b>股票池</b><span>沪深 A 股 · {settings.symbols.length} 只</span></div>
           <div className="connector" />
-          <RuleNode title="买入条件" tone="green" condition={strategy.buy_conditions[0]} onChange={(key, value) => updateCondition("buy_conditions", key, value)} />
+          <div className="rule-group">
+            <div className="rule-group-head"><b>买入条件（{strategy.buy_logic === "all" ? "全部满足" : "任一满足"}）</b><button onClick={() => addCondition("buy_conditions")}>+ 条件</button></div>
+            <div className="rule-node-grid">
+              {strategy.buy_conditions.map((condition, index) => (
+                <RuleNode
+                  key={`buy-${index}`}
+                  title={`买入 ${index + 1}`}
+                  tone="green"
+                  condition={condition}
+                  onChange={(key, value) => updateCondition("buy_conditions", index, key, value)}
+                  onRemove={strategy.buy_conditions.length > 1 ? () => removeCondition("buy_conditions", index) : null}
+                />
+              ))}
+            </div>
+          </div>
           <div className="connector" />
-          <RuleNode title="卖出条件" tone="red" condition={strategy.sell_conditions[0]} onChange={(key, value) => updateCondition("sell_conditions", key, value)} />
+          <div className="rule-group">
+            <div className="rule-group-head"><b>卖出条件（{strategy.sell_logic === "all" ? "全部满足" : "任一满足"}）</b><button onClick={() => addCondition("sell_conditions")}>+ 条件</button></div>
+            <div className="rule-node-grid">
+              {strategy.sell_conditions.map((condition, index) => (
+                <RuleNode
+                  key={`sell-${index}`}
+                  title={`卖出 ${index + 1}`}
+                  tone="red"
+                  condition={condition}
+                  onChange={(key, value) => updateCondition("sell_conditions", index, key, value)}
+                  onRemove={strategy.sell_conditions.length > 1 ? () => removeCondition("sell_conditions", index) : null}
+                />
+              ))}
+            </div>
+          </div>
           <div className="connector" />
-          <div className="rule-node risk"><SlidersHorizontal size={21} /><b>仓位管理</b><span>最大仓位 {settings.max_position * 100}%</span></div>
+          <div className="rule-node risk"><SlidersHorizontal size={21} /><b>仓位管理</b><span>最大仓位 {settings.max_position * 100}% · 最多 {strategy.max_hold_num || "不限"} 只</span></div>
         </div>
         <div className="validation-row">
           <span><Check size={17} weight="bold" />规则检查通过</span>
