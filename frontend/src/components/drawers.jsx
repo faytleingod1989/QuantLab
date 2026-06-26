@@ -16,6 +16,8 @@ import {
 import { controlPullbackTemplate } from "../appConfig";
 import { RateInput, SettingRow } from "./common";
 
+const STRATEGY_JSON_SCHEMA_VERSION = 1;
+
 export function SettingsDrawer({ settings, setSettings, onRun, onCancel, running, progress, close }) {
   const update = (field, value) => setSettings((current) => ({ ...current, [field]: value }));
   return (
@@ -168,6 +170,68 @@ export function updateRuleConditionValue(condition, key, value) {
   return { ...condition, [key]: key === "operator" ? value : Number(value) };
 }
 
+function ensureRuleList(value, field) {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw new Error(`${field} 至少需要 1 条规则`);
+  }
+  return value.map((condition) => {
+    if (!condition || typeof condition !== "object" || Array.isArray(condition)) {
+      throw new Error(`${field} 包含无效规则`);
+    }
+    const indicator = condition.indicator || "ma_cross";
+    if (!indicatorDefaults[indicator]) {
+      throw new Error(`暂不支持的指标：${indicator}`);
+    }
+    return {
+      ...indicatorDefaults[indicator],
+      ...condition,
+      indicator,
+      operator: condition.operator || "above",
+    };
+  });
+}
+
+export function normalizeImportedStrategy(rawValue) {
+  const parsed = typeof rawValue === "string" ? JSON.parse(rawValue) : rawValue;
+  const candidate = parsed?.strategy && typeof parsed.strategy === "object" ? parsed.strategy : parsed;
+  if (!candidate || typeof candidate !== "object" || Array.isArray(candidate)) {
+    throw new Error("JSON 必须是策略对象");
+  }
+  const name = String(candidate.name || "").trim();
+  if (!name) {
+    throw new Error("策略名称不能为空");
+  }
+  return {
+    name,
+    buy_logic: candidate.buy_logic === "any" ? "any" : "all",
+    sell_logic: candidate.sell_logic === "all" ? "all" : "any",
+    max_hold_num: candidate.max_hold_num ? Number(candidate.max_hold_num) : null,
+    candidate_sort: ["none", "return_asc", "return_desc"].includes(candidate.candidate_sort) ? candidate.candidate_sort : "none",
+    sort_window: Number(candidate.sort_window || 20),
+    position_sizing: candidate.position_sizing === "equal_weight" ? "equal_weight" : "cash_weight",
+    buy_conditions: ensureRuleList(candidate.buy_conditions, "买入条件"),
+    sell_conditions: ensureRuleList(candidate.sell_conditions, "卖出条件"),
+  };
+}
+
+export function createStrategyExportPayload(strategy) {
+  return {
+    schema: "quantlab.visual_strategy",
+    schema_version: STRATEGY_JSON_SCHEMA_VERSION,
+    exported_at: new Date().toISOString(),
+    strategy,
+  };
+}
+
+function strategyExportFilename(strategy) {
+  const safeName = String(strategy?.name || "strategy")
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, "-")
+    .replace(/\s+/g, "-")
+    .slice(0, 60) || "strategy";
+  return `${safeName}.quantlab-strategy.json`;
+}
+
 function RuleNode({ title, tone, condition, onChange, onRemove }) {
   const indicator = condition.indicator || "ma_cross";
   const thresholdLabel = {
@@ -253,6 +317,8 @@ function RuleNode({ title, tone, condition, onChange, onRemove }) {
 
 export function StrategyModal({ settings, setSettings, onSave, saving, versionInfo, close }) {
   const strategy = settings.strategy;
+  const [strategyJsonText, setStrategyJsonText] = useState("");
+  const [strategyTransferStatus, setStrategyTransferStatus] = useState("");
   const updateCondition = (kind, targetIndex, key, value) =>
     setSettings((current) => ({
       ...current,
@@ -299,6 +365,36 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
       ...current,
       strategy: { ...current.strategy, [field]: value },
     }));
+  const importStrategy = (rawText) => {
+    try {
+      const importedStrategy = normalizeImportedStrategy(rawText);
+      setSettings((current) => ({
+        ...current,
+        strategy: importedStrategy,
+        strategy_version_id: null,
+      }));
+      setStrategyTransferStatus(`已导入策略「${importedStrategy.name}」，保存后会形成新版本`);
+    } catch (error) {
+      setStrategyTransferStatus(`导入失败：${error.message}`);
+    }
+  };
+  const exportStrategy = () => {
+    const payload = createStrategyExportPayload(strategy);
+    const blob = new Blob([`${JSON.stringify(payload, null, 2)}\n`], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = strategyExportFilename(strategy);
+    anchor.click();
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+    setStrategyTransferStatus(`已导出策略「${strategy.name}」`);
+  };
+  const importStrategyFile = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    importStrategy(await file.text());
+    event.target.value = "";
+  };
   return (
     <div className="modal-backdrop" onClick={(event) => event.target === event.currentTarget && close()}>
       <div className="strategy-modal">
@@ -312,6 +408,11 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
         </div>
         <div className="strategy-template-bar">
           <button className="ghost" onClick={applyControlPullbackTemplate}>套用「主力控盘回踩策略」模板</button>
+          <button className="ghost" onClick={exportStrategy}>导出 JSON</button>
+          <label className="strategy-json-upload">
+            <input type="file" accept="application/json,.json" onChange={importStrategyFile} />
+            导入 JSON
+          </label>
           <label>最大持股<input type="number" min="1" max="200" value={strategy.max_hold_num || ""} onChange={(event) => updateStrategyField("max_hold_num", event.target.value ? Number(event.target.value) : null)} /></label>
           <label>排序
             <select value={strategy.candidate_sort || "none"} onChange={(event) => updateStrategyField("candidate_sort", event.target.value)}>
@@ -321,6 +422,15 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
             </select>
           </label>
           <label>排序窗口<input type="number" min="2" max="500" value={strategy.sort_window || 20} onChange={(event) => updateStrategyField("sort_window", Number(event.target.value))} /></label>
+        </div>
+        <div className="strategy-json-panel">
+          <textarea
+            value={strategyJsonText}
+            onChange={(event) => setStrategyJsonText(event.target.value)}
+            placeholder="也可以把策略 JSON 粘贴到这里，再点击导入。支持纯 strategy 对象，或 { strategy: ... } 包装格式。"
+          />
+          <button className="ghost" disabled={!strategyJsonText.trim()} onClick={() => importStrategy(strategyJsonText)}>从粘贴内容导入</button>
+          <span>{strategyTransferStatus || "导入会替换当前可视化策略；如需持久化，请再点击保存新版本。"}</span>
         </div>
         <div className="rule-flow">
           <div className="rule-node source"><Database size={21} /><b>股票池</b><span>沪深 A 股 · {settings.symbols.length} 只</span></div>
