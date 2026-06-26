@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { createStrategyExportPayload, normalizeImportedStrategy, updateRuleConditionValue } from "./drawers.jsx";
+import {
+  createStrategyExportPayload,
+  normalizeImportedStrategy,
+  securityBelongsToPool,
+  symbolsForPool,
+  updateRuleConditionValue,
+} from "./drawers.jsx";
 
 describe("updateRuleConditionValue", () => {
   it("resets MACD parameters when switching indicator", () => {
@@ -107,5 +113,40 @@ describe("strategy JSON import/export helpers", () => {
     expect(payload.schema).toBe("quantlab.visual_strategy");
     expect(payload.schema_version).toBe(1);
     expect(payload.strategy.name).toBe("导出策略");
+  });
+});
+
+describe("stock pool helpers", () => {
+  const securities = [
+    { symbol: "600000.SH", name: "浦发银行", exchange: "SH", board: "沪主板" },
+    { symbol: "688001.SH", name: "华兴源创", exchange: "SH", board: "科创板" },
+    { symbol: "000001.SZ", name: "平安银行", exchange: "SZ", board: "深主板" },
+    { symbol: "300750.SZ", name: "宁德时代", exchange: "SZ", board: "创业板" },
+    { symbol: "301001.SZ", name: "凯淳股份", exchange: "SZ", board: "" },
+    { symbol: "830799.BJ", name: "艾融软件", exchange: "BJ", board: "北交所" },
+  ];
+
+  it("selects沪深全A without北交所", () => {
+    expect(symbolsForPool(securities, "all_a")).toEqual([
+      "600000.SH",
+      "688001.SH",
+      "000001.SZ",
+      "300750.SZ",
+      "301001.SZ",
+    ]);
+  });
+
+  it("selects exchange and board pools", () => {
+    expect(symbolsForPool(securities, "sh")).toEqual(["600000.SH", "688001.SH"]);
+    expect(symbolsForPool(securities, "sz")).toEqual(["000001.SZ", "300750.SZ", "301001.SZ"]);
+    expect(symbolsForPool(securities, "gem")).toEqual(["300750.SZ", "301001.SZ"]);
+    expect(symbolsForPool(securities, "star")).toEqual(["688001.SH"]);
+  });
+
+  it("supports board inference from symbol suffix and excludes benchmark", () => {
+    expect(securityBelongsToPool({ symbol: "688123.SH", board: "" }, "star")).toBe(true);
+    expect(securityBelongsToPool({ symbol: "688123", exchange: "SSE", board: "" }, "star")).toBe(true);
+    expect(securityBelongsToPool({ symbol: "300123", exchange: "SZSE", board: "" }, "gem")).toBe(true);
+    expect(symbolsForPool(securities, "all_a", "000001.SZ")).not.toContain("000001.SZ");
   });
 });

@@ -646,6 +646,73 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
   );
 }
 
+const stockPoolOptions = [
+  { id: "all_a", title: "沪深全A", helper: "上证 + 深证，排除北交所" },
+  { id: "sh", title: "上证全部", helper: "上交所全部股票" },
+  { id: "sz", title: "深证全部", helper: "深交所全部股票" },
+  { id: "gem", title: "创业板", helper: "300/301 开头" },
+  { id: "star", title: "科创板", helper: "688 开头" },
+];
+
+function getSecurityParts(item) {
+  const symbol = String(item?.symbol || "").toUpperCase();
+  const code = symbol.split(".")[0] || "";
+  const explicitExchange = String(item?.exchange || "").toUpperCase();
+  const suffixExchange = String(symbol.split(".")[1] || "").toUpperCase();
+  const inferredExchange = code.startsWith("6")
+    ? "SH"
+    : code.startsWith("0") || code.startsWith("2") || code.startsWith("3")
+      ? "SZ"
+      : code.startsWith("920") || code.startsWith("8") || code.startsWith("4")
+        ? "BJ"
+        : "";
+  const exchange = ["SH", "SZ", "BJ"].includes(explicitExchange)
+    ? explicitExchange
+    : suffixExchange || inferredExchange;
+  const board = String(item?.board || "");
+  return { symbol, code, exchange, board };
+}
+
+export function securityBelongsToPool(item, poolId) {
+  const { code, exchange, board } = getSecurityParts(item);
+  if (poolId === "all_a") {
+    return exchange === "SH" || exchange === "SZ";
+  }
+  if (poolId === "sh") {
+    return exchange === "SH";
+  }
+  if (poolId === "sz") {
+    return exchange === "SZ";
+  }
+  if (poolId === "gem") {
+    return exchange === "SZ" && (board.includes("创业") || code.startsWith("300") || code.startsWith("301"));
+  }
+  if (poolId === "star") {
+    return exchange === "SH" && (board.includes("科创") || code.startsWith("688"));
+  }
+  return false;
+}
+
+export function symbolsFromSecurities(securities, benchmark = null) {
+  const seen = new Set();
+  return securities
+    .map((item) => item.symbol)
+    .filter((symbol) => {
+      if (!symbol || symbol === benchmark || seen.has(symbol)) {
+        return false;
+      }
+      seen.add(symbol);
+      return true;
+    });
+}
+
+export function symbolsForPool(securities, poolId, benchmark = null) {
+  return symbolsFromSecurities(
+    securities.filter((item) => securityBelongsToPool(item, poolId)),
+    benchmark
+  );
+}
+
 export function DataDrawer({
   settings,
   setSettings,
@@ -677,6 +744,35 @@ export function DataDrawer({
   }, [query, securities]);
   const visibleSecurities = filteredSecurities.slice(0, 200);
   const hiddenCount = Math.max(0, filteredSecurities.length - visibleSecurities.length);
+  const filteredSymbols = useMemo(
+    () => symbolsFromSecurities(filteredSecurities, settings.benchmark),
+    [filteredSecurities, settings.benchmark]
+  );
+  const stockPools = useMemo(
+    () =>
+      stockPoolOptions.map((pool) => ({
+        ...pool,
+        symbols: symbolsForPool(securities, pool.id, settings.benchmark),
+      })),
+    [securities, settings.benchmark]
+  );
+  const activePoolId = useMemo(() => {
+    const selected = new Set(settings.symbols);
+    return stockPools.find((pool) => (
+      pool.symbols.length > 0 &&
+      pool.symbols.length === selected.size &&
+      pool.symbols.every((symbol) => selected.has(symbol))
+    ))?.id;
+  }, [settings.symbols, stockPools]);
+  const applySymbols = (symbols) =>
+    setSettings((current) => ({
+      ...current,
+      dataset_id: null,
+      symbols,
+    }));
+  const selectPool = (pool) => applySymbols(pool.symbols);
+  const selectFiltered = () => applySymbols(filteredSymbols);
+  const clearSelection = () => applySymbols([]);
   const toggle = (symbol) =>
     setSettings((current) => ({
       ...current,
@@ -728,6 +824,33 @@ export function DataDrawer({
         </div>
         {!settings.dataset_id ? (
           <>
+            <div className="security-bulk-panel">
+              <div className="security-bulk-copy">
+                <b>批量选择股票池</b>
+                <small>直接选择全市场或指定板块；北交所暂不纳入全A。</small>
+              </div>
+              <div className="security-bulk-actions">
+                {stockPools.map((pool) => (
+                  <button
+                    key={pool.id}
+                    className={activePoolId === pool.id ? "selected" : ""}
+                    onClick={() => selectPool(pool)}
+                    disabled={!pool.symbols.length}
+                  >
+                    <b>{pool.title}</b>
+                    <span>{pool.symbols.length} 只 · {pool.helper}</span>
+                  </button>
+                ))}
+                <button className="utility" onClick={selectFiltered} disabled={!filteredSymbols.length}>
+                  当前搜索结果
+                  <span>{filteredSymbols.length} 只</span>
+                </button>
+                <button className="utility danger" onClick={clearSelection} disabled={!settings.symbols.length}>
+                  清空选择
+                </button>
+              </div>
+              <small className="security-bulk-note">批量选择会设置当前回测股票池；如需真实全A行情，请优先使用“同步沪深全A”生成数据快照。</small>
+            </div>
             <div className="security-search">
               <input
                 type="search"

@@ -3,6 +3,7 @@ from __future__ import annotations
 from functools import lru_cache
 from io import StringIO
 from pathlib import Path
+import logging
 import re
 
 import numpy as np
@@ -18,6 +19,7 @@ SAMPLE_NAMES = {
 }
 SYMBOL_PATTERN = re.compile(r"^(\d{6})\.(SH|SZ|BJ)$")
 MAIN_BOARD_REGISTRATION_START = pd.Timestamp("2023-04-10")
+logger = logging.getLogger(__name__)
 
 
 class DataSourceError(RuntimeError):
@@ -117,6 +119,17 @@ def infer_board(symbol: str) -> str:
 
 def _market_symbol(code, exchange: str) -> str:
     return f"{str(code).strip().zfill(6)}.{exchange}"
+
+
+def _infer_exchange_from_code(code) -> str | None:
+    normalized = str(code).strip().zfill(6)
+    if normalized.startswith(("688", "689", "6")):
+        return "SH"
+    if normalized.startswith(("0", "2", "3")):
+        return "SZ"
+    if normalized.startswith(("920", "8", "4")):
+        return "BJ"
+    return None
 
 
 def _clean_date(value) -> str:
@@ -562,6 +575,40 @@ def fetch_akshare_security_master(client=None) -> list[dict]:
             )
     except Exception as error:
         raise DataSourceError(f"AkShare 北交所证券主数据获取失败: {error}") from error
+
+    try:
+        all_a = client.stock_info_a_code_name()
+        for _, row in all_a.iterrows():
+            code = str(row.get("code", "")).strip().zfill(6)
+            name = str(row.get("name", "")).strip()
+            exchange = _infer_exchange_from_code(code)
+            if (
+                exchange != "SH"
+                or not code.startswith(("688", "689"))
+                or not name
+                or "退" in name
+            ):
+                continue
+            symbol = _market_symbol(code, exchange)
+            if symbol in records:
+                continue
+            put(
+                {
+                    "symbol": symbol,
+                    "name": name,
+                    "exchange": exchange,
+                    "board": infer_board(symbol),
+                    "listed_date": "1990-12-19",
+                    "delisted_date": None,
+                    "status": "active",
+                    "industry": None,
+                    "total_share": None,
+                    "float_share": None,
+                    "source": "akshare_master",
+                }
+            )
+    except Exception as error:
+        logger.warning("AkShare 全市场证券主数据补充失败: %s", error)
 
     try:
         sh_delist = client.stock_info_sh_delist()

@@ -103,6 +103,15 @@ class FakeSecurityMasterAkshare:
         )
 
     @staticmethod
+    def stock_info_a_code_name():
+        return pd.DataFrame(
+            {
+                "code": ["688001", "600519", "300750"],
+                "name": ["华兴源创", "贵州茅台", "宁德时代"],
+            }
+        )
+
+    @staticmethod
     def stock_info_sh_delist():
         return pd.DataFrame(
             {
@@ -204,6 +213,7 @@ def test_akshare_security_master_normalizes_active_and_delisted_records():
     records = fetch_akshare_security_master(client=FakeSecurityMasterAkshare)
     by_symbol = {record["symbol"]: record for record in records}
     assert by_symbol["600519.SH"]["listed_date"] == "2001-08-27"
+    assert by_symbol["688001.SH"]["board"] == "科创板"
     assert by_symbol["300750.SZ"]["board"] == "创业板"
     assert by_symbol["300750.SZ"]["total_share"] == 2_400_000_000
     assert by_symbol["920000.BJ"]["exchange"] == "BJ"
