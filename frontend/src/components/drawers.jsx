@@ -191,6 +191,26 @@ function ensureRuleList(value, field) {
   });
 }
 
+function flattenGroups(groups) {
+  return groups.flatMap((group) => group.conditions);
+}
+
+function ensureRuleGroupList(value, field) {
+  if (!Array.isArray(value) || value.length === 0) {
+    return null;
+  }
+  return value.map((group, index) => {
+    if (!group || typeof group !== "object" || Array.isArray(group)) {
+      throw new Error(`${field} 包含无效规则组`);
+    }
+    return {
+      name: String(group.name || `${field}${index + 1}`).slice(0, 60),
+      logic: group.logic === "any" ? "any" : "all",
+      conditions: ensureRuleList(group.conditions, `${field}${index + 1}`),
+    };
+  });
+}
+
 export function normalizeImportedStrategy(rawValue) {
   const parsed = typeof rawValue === "string" ? JSON.parse(rawValue) : rawValue;
   const candidate = parsed?.strategy && typeof parsed.strategy === "object" ? parsed.strategy : parsed;
@@ -201,16 +221,22 @@ export function normalizeImportedStrategy(rawValue) {
   if (!name) {
     throw new Error("策略名称不能为空");
   }
+  const buyGroups = ensureRuleGroupList(candidate.buy_groups, "买入组");
+  const sellGroups = ensureRuleGroupList(candidate.sell_groups, "卖出组");
   return {
     name,
     buy_logic: candidate.buy_logic === "any" ? "any" : "all",
     sell_logic: candidate.sell_logic === "all" ? "all" : "any",
+    buy_group_logic: candidate.buy_group_logic === "all" ? "all" : "any",
+    sell_group_logic: candidate.sell_group_logic === "all" ? "all" : "any",
     max_hold_num: candidate.max_hold_num ? Number(candidate.max_hold_num) : null,
     candidate_sort: ["none", "return_asc", "return_desc"].includes(candidate.candidate_sort) ? candidate.candidate_sort : "none",
     sort_window: Number(candidate.sort_window || 20),
     position_sizing: candidate.position_sizing === "equal_weight" ? "equal_weight" : "cash_weight",
-    buy_conditions: ensureRuleList(candidate.buy_conditions, "买入条件"),
-    sell_conditions: ensureRuleList(candidate.sell_conditions, "卖出条件"),
+    buy_conditions: buyGroups ? flattenGroups(buyGroups) : ensureRuleList(candidate.buy_conditions, "买入条件"),
+    sell_conditions: sellGroups ? flattenGroups(sellGroups) : ensureRuleList(candidate.sell_conditions, "卖出条件"),
+    buy_groups: buyGroups,
+    sell_groups: sellGroups,
   };
 }
 
@@ -230,6 +256,67 @@ function strategyExportFilename(strategy) {
     .replace(/\s+/g, "-")
     .slice(0, 60) || "strategy";
   return `${safeName}.quantlab-strategy.json`;
+}
+
+const strategySides = {
+  buy: {
+    label: "买入",
+    tone: "green",
+    conditionsKey: "buy_conditions",
+    groupsKey: "buy_groups",
+    logicKey: "buy_logic",
+    groupLogicKey: "buy_group_logic",
+    defaultOperator: "above",
+  },
+  sell: {
+    label: "卖出",
+    tone: "red",
+    conditionsKey: "sell_conditions",
+    groupsKey: "sell_groups",
+    logicKey: "sell_logic",
+    groupLogicKey: "sell_group_logic",
+    defaultOperator: "below",
+  },
+};
+
+function defaultConditionForSide(side) {
+  return {
+    indicator: "price_vs_ma",
+    operator: strategySides[side].defaultOperator,
+    left: 20,
+    right: 60,
+    threshold: 50,
+  };
+}
+
+function groupsForSide(strategy, side) {
+  const meta = strategySides[side];
+  const groups = strategy[meta.groupsKey];
+  if (Array.isArray(groups) && groups.length) {
+    return groups;
+  }
+  return [
+    {
+      name: `${meta.label}组 1`,
+      logic: strategy[meta.logicKey] || (side === "buy" ? "all" : "any"),
+      conditions: strategy[meta.conditionsKey] || [defaultConditionForSide(side)],
+    },
+  ];
+}
+
+function updateStrategySide(currentStrategy, side, nextGroups) {
+  const meta = strategySides[side];
+  const normalizedGroups = nextGroups.map((group, index) => ({
+    ...group,
+    name: group.name || `${meta.label}组 ${index + 1}`,
+    conditions: group.conditions.length ? group.conditions : [defaultConditionForSide(side)],
+  }));
+  return {
+    ...currentStrategy,
+    [meta.groupsKey]: normalizedGroups,
+    [meta.conditionsKey]: flattenGroups(normalizedGroups),
+    [meta.logicKey]: normalizedGroups[0]?.logic || currentStrategy[meta.logicKey],
+  };
 }
 
 function RuleNode({ title, tone, condition, onChange, onRemove }) {
@@ -319,37 +406,66 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
   const strategy = settings.strategy;
   const [strategyJsonText, setStrategyJsonText] = useState("");
   const [strategyTransferStatus, setStrategyTransferStatus] = useState("");
-  const updateCondition = (kind, targetIndex, key, value) =>
+  const buyGroups = groupsForSide(strategy, "buy");
+  const sellGroups = groupsForSide(strategy, "sell");
+  const updateSideGroups = (side, updater) =>
     setSettings((current) => ({
       ...current,
-      strategy: {
-        ...current.strategy,
-        [kind]: current.strategy[kind].map((condition, index) =>
-          index === targetIndex
-            ? updateRuleConditionValue(condition, key, value)
-            : condition
-        ),
-      },
+      strategy: updateStrategySide(
+        current.strategy,
+        side,
+        updater(groupsForSide(current.strategy, side))
+      ),
     }));
-  const addCondition = (kind) =>
-    setSettings((current) => ({
-      ...current,
-      strategy: {
-        ...current.strategy,
-        [kind]: [
-          ...current.strategy[kind],
-          { indicator: "price_vs_ma", operator: kind === "buy_conditions" ? "above" : "below", left: 20, right: 60, threshold: 50 },
-        ],
+  const updateGroupField = (side, groupIndex, key, value) =>
+    updateSideGroups(side, (groups) =>
+      groups.map((group, index) => (index === groupIndex ? { ...group, [key]: value } : group))
+    );
+  const updateCondition = (side, groupIndex, targetIndex, key, value) =>
+    updateSideGroups(side, (groups) =>
+      groups.map((group, index) =>
+        index === groupIndex
+          ? {
+              ...group,
+              conditions: group.conditions.map((condition, conditionIndex) =>
+                conditionIndex === targetIndex
+                  ? updateRuleConditionValue(condition, key, value)
+                  : condition
+              ),
+            }
+          : group
+      )
+    );
+  const addCondition = (side, groupIndex) =>
+    updateSideGroups(side, (groups) =>
+      groups.map((group, index) =>
+        index === groupIndex
+          ? { ...group, conditions: [...group.conditions, defaultConditionForSide(side)] }
+          : group
+      )
+    );
+  const removeCondition = (side, groupIndex, removeIndex) =>
+    updateSideGroups(side, (groups) =>
+      groups.map((group, index) =>
+        index === groupIndex
+          ? {
+              ...group,
+              conditions: group.conditions.filter((_, conditionIndex) => conditionIndex !== removeIndex),
+            }
+          : group
+      )
+    );
+  const addGroup = (side) =>
+    updateSideGroups(side, (groups) => [
+      ...groups,
+      {
+        name: `${strategySides[side].label}组 ${groups.length + 1}`,
+        logic: side === "buy" ? "all" : "any",
+        conditions: [defaultConditionForSide(side)],
       },
-    }));
-  const removeCondition = (kind, removeIndex) =>
-    setSettings((current) => ({
-      ...current,
-      strategy: {
-        ...current.strategy,
-        [kind]: current.strategy[kind].filter((_, index) => index !== removeIndex),
-      },
-    }));
+    ]);
+  const removeGroup = (side, removeIndex) =>
+    updateSideGroups(side, (groups) => groups.filter((_, index) => index !== removeIndex));
   const applyControlPullbackTemplate = () =>
     setSettings((current) => ({
       ...current,
@@ -422,6 +538,18 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
             </select>
           </label>
           <label>排序窗口<input type="number" min="2" max="500" value={strategy.sort_window || 20} onChange={(event) => updateStrategyField("sort_window", Number(event.target.value))} /></label>
+          <label>买入组间
+            <select value={strategy.buy_group_logic || "any"} onChange={(event) => updateStrategyField("buy_group_logic", event.target.value)}>
+              <option value="any">任一组满足</option>
+              <option value="all">全部组满足</option>
+            </select>
+          </label>
+          <label>卖出组间
+            <select value={strategy.sell_group_logic || "any"} onChange={(event) => updateStrategyField("sell_group_logic", event.target.value)}>
+              <option value="any">任一组满足</option>
+              <option value="all">全部组满足</option>
+            </select>
+          </label>
         </div>
         <div className="strategy-json-panel">
           <textarea
@@ -435,36 +563,68 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
         <div className="rule-flow">
           <div className="rule-node source"><Database size={21} /><b>股票池</b><span>沪深 A 股 · {settings.symbols.length} 只</span></div>
           <div className="connector" />
-          <div className="rule-group">
-            <div className="rule-group-head"><b>买入条件（{strategy.buy_logic === "all" ? "全部满足" : "任一满足"}）</b><button onClick={() => addCondition("buy_conditions")}>+ 条件</button></div>
-            <div className="rule-node-grid">
-              {strategy.buy_conditions.map((condition, index) => (
-                <RuleNode
-                  key={`buy-${index}`}
-                  title={`买入 ${index + 1}`}
-                  tone="green"
-                  condition={condition}
-                  onChange={(key, value) => updateCondition("buy_conditions", index, key, value)}
-                  onRemove={strategy.buy_conditions.length > 1 ? () => removeCondition("buy_conditions", index) : null}
-                />
-              ))}
+          <div className="rule-side">
+            <div className="rule-side-head">
+              <b>买入条件组（{(strategy.buy_group_logic || "any") === "all" ? "全部组满足" : "任一组满足"}）</b>
+              <button onClick={() => addGroup("buy")}>+ 买入组</button>
             </div>
+            {buyGroups.map((group, groupIndex) => (
+              <div className="rule-group" key={`buy-group-${groupIndex}`}>
+                <div className="rule-group-head">
+                  <input value={group.name} onChange={(event) => updateGroupField("buy", groupIndex, "name", event.target.value)} />
+                  <select value={group.logic || "all"} onChange={(event) => updateGroupField("buy", groupIndex, "logic", event.target.value)}>
+                    <option value="all">组内全部满足</option>
+                    <option value="any">组内任一满足</option>
+                  </select>
+                  <button onClick={() => addCondition("buy", groupIndex)}>+ 条件</button>
+                  {buyGroups.length > 1 ? <button className="danger-mini" onClick={() => removeGroup("buy", groupIndex)}>删组</button> : null}
+                </div>
+                <div className="rule-node-grid">
+                  {group.conditions.map((condition, index) => (
+                    <RuleNode
+                      key={`buy-${groupIndex}-${index}`}
+                      title={`买入 ${groupIndex + 1}.${index + 1}`}
+                      tone="green"
+                      condition={condition}
+                      onChange={(key, value) => updateCondition("buy", groupIndex, index, key, value)}
+                      onRemove={group.conditions.length > 1 ? () => removeCondition("buy", groupIndex, index) : null}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
           <div className="connector" />
-          <div className="rule-group">
-            <div className="rule-group-head"><b>卖出条件（{strategy.sell_logic === "all" ? "全部满足" : "任一满足"}）</b><button onClick={() => addCondition("sell_conditions")}>+ 条件</button></div>
-            <div className="rule-node-grid">
-              {strategy.sell_conditions.map((condition, index) => (
-                <RuleNode
-                  key={`sell-${index}`}
-                  title={`卖出 ${index + 1}`}
-                  tone="red"
-                  condition={condition}
-                  onChange={(key, value) => updateCondition("sell_conditions", index, key, value)}
-                  onRemove={strategy.sell_conditions.length > 1 ? () => removeCondition("sell_conditions", index) : null}
-                />
-              ))}
+          <div className="rule-side">
+            <div className="rule-side-head">
+              <b>卖出条件组（{(strategy.sell_group_logic || "any") === "all" ? "全部组满足" : "任一组满足"}）</b>
+              <button onClick={() => addGroup("sell")}>+ 卖出组</button>
             </div>
+            {sellGroups.map((group, groupIndex) => (
+              <div className="rule-group" key={`sell-group-${groupIndex}`}>
+                <div className="rule-group-head">
+                  <input value={group.name} onChange={(event) => updateGroupField("sell", groupIndex, "name", event.target.value)} />
+                  <select value={group.logic || "any"} onChange={(event) => updateGroupField("sell", groupIndex, "logic", event.target.value)}>
+                    <option value="all">组内全部满足</option>
+                    <option value="any">组内任一满足</option>
+                  </select>
+                  <button onClick={() => addCondition("sell", groupIndex)}>+ 条件</button>
+                  {sellGroups.length > 1 ? <button className="danger-mini" onClick={() => removeGroup("sell", groupIndex)}>删组</button> : null}
+                </div>
+                <div className="rule-node-grid">
+                  {group.conditions.map((condition, index) => (
+                    <RuleNode
+                      key={`sell-${groupIndex}-${index}`}
+                      title={`卖出 ${groupIndex + 1}.${index + 1}`}
+                      tone="red"
+                      condition={condition}
+                      onChange={(key, value) => updateCondition("sell", groupIndex, index, key, value)}
+                      onRemove={group.conditions.length > 1 ? () => removeCondition("sell", groupIndex, index) : null}
+                    />
+                  ))}
+                </div>
+              </div>
+            ))}
           </div>
           <div className="connector" />
           <div className="rule-node risk"><SlidersHorizontal size={21} /><b>仓位管理</b><span>最大仓位 {settings.max_position * 100}% · 最多 {strategy.max_hold_num || "不限"} 只</span></div>

@@ -4,7 +4,7 @@ import pandas as pd
 import pytest
 
 from backend.engine import _condition, _fee, _money, _passes_stock_filters, _rsi, run_backtest
-from backend.models import BacktestRequest, RuleCondition, VisualStrategy
+from backend.models import BacktestRequest, RuleCondition, RuleGroup, VisualStrategy
 
 
 def test_backtest_is_deterministic_and_balanced():
@@ -303,6 +303,61 @@ def test_candidate_sort_and_max_hold_limit_select_lowest_recent_return():
     bought = {trade["symbol"] for trade in result["trades"] if trade["side"] == "买入"}
     assert bought == {"AAA.SH", "BBB.SH"}
     assert any("最多持有 2 只" in item for item in result["assumptions"])
+
+
+def test_grouped_buy_conditions_use_or_between_groups():
+    dates = pd.bdate_range("2024-01-02", periods=25)
+    rising = np.linspace(10, 15, 25)
+    falling = np.linspace(15, 10, 25)
+
+    def frame(symbol: str, close: np.ndarray) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "trade_date": dates,
+                "symbol": symbol,
+                "name": symbol,
+                "open": close,
+                "high": close + 0.1,
+                "low": close - 0.1,
+                "close": close,
+                "prev_close": np.r_[close[0], close[:-1]],
+                "volume": [1_000_000] * len(close),
+                "amount": close * 1_000_000,
+                "limit_up": close + 1.0,
+                "limit_down": np.maximum(close - 1.0, 0.01),
+                "suspended": [False] * len(close),
+            }
+        )
+
+    request = BacktestRequest(
+        symbols=["AAA.SH", "BBB.SH"],
+        start_date="2024-01-02",
+        end_date="2024-02-05",
+        max_symbol_position=0.2,
+        strategy=VisualStrategy(
+            buy_conditions=[RuleCondition(indicator="return_between", left=1, lower=2, upper=3)],
+            sell_conditions=[],
+            buy_group_logic="any",
+            buy_groups=[
+                RuleGroup(
+                    name="趋势组",
+                    logic="all",
+                    conditions=[RuleCondition(indicator="price_vs_ma", operator="above", left=5)],
+                ),
+                RuleGroup(
+                    name="回落组",
+                    logic="all",
+                    conditions=[RuleCondition(indicator="price_vs_ma", operator="below", left=5)],
+                ),
+            ],
+        ),
+    )
+    result = run_backtest(
+        {"AAA.SH": frame("AAA.SH", rising), "BBB.SH": frame("BBB.SH", falling)},
+        request,
+    )
+    bought = {trade["symbol"] for trade in result["trades"] if trade["side"] == "买入"}
+    assert bought == {"AAA.SH", "BBB.SH"}
 
 
 def test_life_line_watch_sells_after_three_light_break_days():

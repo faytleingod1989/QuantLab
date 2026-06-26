@@ -56,6 +56,39 @@ describe("strategy JSON import/export helpers", () => {
     });
   });
 
+  it("normalizes grouped strategy JSON and flattens conditions for compatibility", () => {
+    const imported = normalizeImportedStrategy({
+      name: "分组策略",
+      buy_group_logic: "any",
+      sell_group_logic: "all",
+      buy_groups: [
+        {
+          name: "趋势组",
+          logic: "all",
+          conditions: [{ indicator: "ma_stack", operator: "above", left: 10, right: 20, threshold: 60 }],
+        },
+        {
+          name: "回踩组",
+          logic: "all",
+          conditions: [{ indicator: "volume_vs_ma", operator: "below", left: 5, threshold: 0.7 }],
+        },
+      ],
+      sell_groups: [
+        {
+          name: "风险组",
+          logic: "any",
+          conditions: [{ indicator: "life_line_watch", operator: "below" }],
+        },
+      ],
+    });
+
+    expect(imported.buy_group_logic).toBe("any");
+    expect(imported.sell_group_logic).toBe("all");
+    expect(imported.buy_groups).toHaveLength(2);
+    expect(imported.buy_conditions.map((condition) => condition.indicator)).toEqual(["ma_stack", "volume_vs_ma"]);
+    expect(imported.sell_groups[0].conditions[0]).toMatchObject({ indicator: "life_line_watch", threshold: 3 });
+  });
+
   it("rejects unsupported indicators", () => {
     expect(() => normalizeImportedStrategy({
       name: "坏策略",

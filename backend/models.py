@@ -90,10 +90,18 @@ class RuleCondition(BaseModel):
         return self
 
 
+class RuleGroup(BaseModel):
+    name: str = Field(default="规则组", min_length=1, max_length=60)
+    logic: Literal["all", "any"] = "all"
+    conditions: list[RuleCondition] = Field(min_length=1, max_length=50)
+
+
 class VisualStrategy(BaseModel):
     name: str = "均线多头策略"
     buy_logic: Literal["all", "any"] = "all"
     sell_logic: Literal["all", "any"] = "any"
+    buy_group_logic: Literal["all", "any"] = "any"
+    sell_group_logic: Literal["all", "any"] = "any"
     max_hold_num: int | None = Field(default=None, ge=1, le=200)
     candidate_sort: Literal["none", "return_asc", "return_desc"] = "none"
     sort_window: int = Field(default=20, ge=2, le=500)
@@ -108,6 +116,8 @@ class VisualStrategy(BaseModel):
             RuleCondition(indicator="ma_cross", operator="cross_below", left=20, right=60)
         ]
     )
+    buy_groups: list[RuleGroup] | None = Field(default=None, max_length=20)
+    sell_groups: list[RuleGroup] | None = Field(default=None, max_length=20)
 
 
 class BacktestRequest(BaseModel):

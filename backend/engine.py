@@ -6,7 +6,7 @@ from decimal import Decimal, ROUND_HALF_UP
 import numpy as np
 import pandas as pd
 
-from .models import BacktestRequest, RuleCondition
+from .models import BacktestRequest, RuleCondition, RuleGroup
 
 
 class BacktestCancelled(Exception):
@@ -135,6 +135,29 @@ def _combine(frame: pd.DataFrame, rules: list[RuleCondition], logic: str) -> pd.
     return signals.all(axis=1) if logic == "all" else signals.any(axis=1)
 
 
+def _combine_groups(frame: pd.DataFrame, groups: list[RuleGroup], group_logic: str) -> pd.Series:
+    usable_groups = [group for group in groups if group.conditions]
+    if not usable_groups:
+        return pd.Series(False, index=frame.index)
+    group_signals = pd.concat(
+        [_combine(frame, group.conditions, group.logic) for group in usable_groups],
+        axis=1,
+    )
+    return group_signals.all(axis=1) if group_logic == "all" else group_signals.any(axis=1)
+
+
+def _combine_strategy_side(
+    frame: pd.DataFrame,
+    rules: list[RuleCondition],
+    logic: str,
+    groups: list[RuleGroup] | None,
+    group_logic: str,
+) -> pd.Series:
+    if groups:
+        return _combine_groups(frame, groups, group_logic)
+    return _combine(frame, rules, logic)
+
+
 def _fee(value: float, request: BacktestRequest, is_sell: bool) -> float:
     commission = _money(max(request.min_commission, value * request.commission_rate))
     transfer = _money(value * request.transfer_fee_rate)
@@ -195,11 +218,14 @@ def _candidate_score(frame: pd.DataFrame, signal_date, request: BacktestRequest)
 
 
 def _stateful_sell_rules(request: BacktestRequest) -> list[RuleCondition]:
-    return [
+    rules = [
         rule
         for rule in request.strategy.sell_conditions
         if rule.indicator == "life_line_watch"
     ]
+    for group in request.strategy.sell_groups or []:
+        rules.extend(rule for rule in group.conditions if rule.indicator == "life_line_watch")
+    return rules
 
 
 def _stateless_sell_rules(request: BacktestRequest) -> list[RuleCondition]:
@@ -208,6 +234,17 @@ def _stateless_sell_rules(request: BacktestRequest) -> list[RuleCondition]:
         for rule in request.strategy.sell_conditions
         if rule.indicator != "life_line_watch"
     ]
+
+
+def _stateless_sell_groups(request: BacktestRequest) -> list[RuleGroup] | None:
+    if not request.strategy.sell_groups:
+        return None
+    groups = []
+    for group in request.strategy.sell_groups:
+        conditions = [rule for rule in group.conditions if rule.indicator != "life_line_watch"]
+        if conditions:
+            groups.append(RuleGroup(name=group.name, logic=group.logic, conditions=conditions))
+    return groups or None
 
 
 def _evaluate_life_line_watch(
@@ -283,11 +320,19 @@ def run_backtest(
                 raise ValueError("数据包含无法识别的复权收盘价")
         else:
             current["signal_close"] = current["close"]
-        current["buy_signal"] = _combine(
-            current, request.strategy.buy_conditions, request.strategy.buy_logic
+        current["buy_signal"] = _combine_strategy_side(
+            current,
+            request.strategy.buy_conditions,
+            request.strategy.buy_logic,
+            request.strategy.buy_groups,
+            request.strategy.buy_group_logic,
         )
-        current["sell_signal"] = _combine(
-            current, _stateless_sell_rules(request), request.strategy.sell_logic
+        current["sell_signal"] = _combine_strategy_side(
+            current,
+            _stateless_sell_rules(request),
+            request.strategy.sell_logic,
+            _stateless_sell_groups(request),
+            request.strategy.sell_group_logic,
         )
         amount = current["amount"] if "amount" in current else current["volume"] * current["close"]
         current["average_amount_20"] = pd.to_numeric(amount, errors="coerce").fillna(0).rolling(20, min_periods=1).mean()
@@ -599,6 +644,11 @@ def _summarize(
                 f"最多持有 {request.strategy.max_hold_num} 只；候选排序 {request.strategy.candidate_sort}({request.strategy.sort_window}日)"
                 if request.strategy.max_hold_num
                 else "未限制最大持股数量"
+            ),
+            (
+                f"启用条件分组：买入组间 {request.strategy.buy_group_logic}；卖出组间 {request.strategy.sell_group_logic}"
+                if request.strategy.buy_groups or request.strategy.sell_groups
+                else "未启用条件分组表达式"
             ),
             (
                 f"股票池过滤：排除 ST={request.exclude_st}，最少上市天数 {request.min_listed_days}，20日均成交额下限 {request.min_average_amount:,.0f}"
