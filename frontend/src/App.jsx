@@ -95,7 +95,7 @@ function DataCenterPage({
         </div>
         <div className="view-actions">
           <button className="ghost" onClick={onSyncAll} disabled={!source?.akshare_available || syncingAll}>
-            {syncingAll ? "全A同步中…" : "同步沪深全A"}
+            {syncingAll ? "全A补齐中…" : selectedCoverage?.isLow ? "继续补齐全A" : "同步沪深全A"}
           </button>
           <button className="primary" onClick={openData}>打开数据管理</button>
         </div>
@@ -117,7 +117,7 @@ function DataCenterPage({
                 <span>
                   <b>{dataset.name}</b>
                   <small>{dataset.source === "akshare_all" ? "沪深全A" : dataset.source === "akshare" ? "AkShare" : "CSV"} · {dataset.symbol_count} 标的 · {dataset.row_count} 行 · {dataset.start_date} — {dataset.end_date}{coverageText}</small>
-                  {coverage?.isLow ? <small className="dataset-warning">全A快照覆盖不足，当前只有部分行情；建议删除后重新同步。</small> : null}
+                  {coverage?.isLow ? <small className="dataset-warning">全A快照覆盖不足，当前只有部分行情；可继续同步补齐剩余股票。</small> : null}
                 </span>
                 <div>
                   <button className="ghost" onClick={() => onSelectDataset(dataset)} disabled={settings.dataset_id === dataset.id}>
@@ -275,12 +275,13 @@ function isSyncableShSzSecurity(item) {
 
 function allMarketCoverage(dataset, expectedCount) {
   if (!dataset || dataset.source !== "akshare_all" || !expectedCount) return null;
-  const syncedCount = Number(dataset.symbol_count || 0);
+  const syncedCount = Number(dataset._coverage?.covered ?? Math.max(0, Number(dataset.symbol_count || 0) - 1));
+  const expected = Number(dataset._coverage?.expected || expectedCount);
   return {
-    expectedCount,
+    expectedCount: expected,
     syncedCount,
-    ratio: syncedCount / expectedCount,
-    isLow: syncedCount < Math.ceil(expectedCount * 0.9),
+    ratio: syncedCount / expected,
+    isLow: syncedCount < Math.ceil(expected * 0.9),
   };
 }
 
@@ -595,7 +596,10 @@ function App() {
       setDatasets((current) => [dataset, ...current.filter((item) => item.id !== dataset.id)]);
       applyDataset(dataset, dataset.summary.symbols);
       setDatasetQuality({ dataset, summary: dataset.summary, quality_checks: dataset.quality_checks || [] });
-      setNotice(dataset.duplicate ? "真实行情快照已存在并已选中" : `真实行情已同步：${dataset.summary.symbol_count} 标的，${dataset.summary.row_count} 行${dataset._sync_note ? `（${dataset._sync_note}）` : ""}`);
+      const coverageText = allMarket && dataset._coverage
+        ? `，A股覆盖 ${dataset._coverage.covered}/${dataset._coverage.expected}`
+        : "";
+      setNotice(dataset.duplicate ? "真实行情快照已存在并已选中" : `真实行情已同步：${dataset.summary.symbol_count} 标的，${dataset.summary.row_count} 行${coverageText}${dataset._sync_note ? `（${dataset._sync_note}）` : ""}`);
     } catch (error) {
       setNotice(`同步失败：${errorMessage(error)}`);
     } finally {

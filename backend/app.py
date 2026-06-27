@@ -7,6 +7,7 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from uuid import uuid4
 
+import pandas as pd
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.concurrency import run_in_threadpool
@@ -92,6 +93,7 @@ task_manager = BacktestTaskManager(
     repository, max_workers=int(os.getenv("QUANTLAB_BACKTEST_WORKERS", "2"))
 )
 MIN_ALL_MARKET_SYNC_COVERAGE = 0.8
+ALL_MARKET_SYNC_BATCH_SIZE = int(os.getenv("QUANTLAB_ALL_MARKET_BATCH_SIZE", "200"))
 
 
 @asynccontextmanager
@@ -432,6 +434,67 @@ def _ensure_all_market_sync_coverage(frame, requested_symbols: list[str], benchm
     return actual
 
 
+def _all_market_coverage(frame, requested_symbols: list[str], benchmark: str) -> dict:
+    requested = {normalize_symbol(symbol) for symbol in requested_symbols}
+    benchmark_symbol = normalize_symbol(benchmark)
+    synced = {normalize_symbol(symbol) for symbol in frame["symbol"].dropna().unique()}
+    covered = sorted((synced - {benchmark_symbol}) & requested)
+    expected = len(requested)
+    return {
+        "expected": expected,
+        "covered": len(covered),
+        "missing": max(0, expected - len(covered)),
+        "coverage": (len(covered) / expected) if expected else 0,
+        "covered_symbols": covered,
+    }
+
+
+def _latest_all_market_dataset_by_name(name: str) -> dict | None:
+    for dataset in repository.list_datasets():
+        if dataset.get("source") == "akshare_all" and dataset.get("name") == name:
+            return dataset
+    return None
+
+
+def _delete_dataset_record_and_file(record: dict) -> None:
+    deleted = repository.delete_dataset(record["id"])
+    if not deleted:
+        return
+    try:
+        dataset_path = Path(deleted["path"]).resolve()
+        datasets_root = (database_path.parent / "datasets").resolve()
+        if dataset_path.is_file() and datasets_root in dataset_path.parents:
+            dataset_path.unlink()
+    except OSError as error:
+        logger.warning("dataset_file_delete_failed dataset_id=%s error=%s", deleted["id"], error)
+
+
+def _merge_market_frames(existing_frame, new_frame):
+    if existing_frame is None or existing_frame.empty:
+        return new_frame
+    combined = pd.concat([existing_frame, new_frame], ignore_index=True)
+    combined["symbol"] = combined["symbol"].map(normalize_symbol)
+    combined["trade_date"] = pd.to_datetime(combined["trade_date"])
+    return (
+        combined
+        .sort_values(["symbol", "trade_date"])
+        .drop_duplicates(["symbol", "trade_date"], keep="last")
+        .reset_index(drop=True)
+    )
+
+
+def _hydrate_dataset_response(record: dict, frame, requested_symbols: list[str], benchmark: str) -> dict:
+    prepared = prepare_market_frame(frame)
+    summary = dataset_summary(prepared, prepared=True)
+    coverage = _all_market_coverage(prepared, requested_symbols, benchmark)
+    return {
+        **record,
+        "summary": summary,
+        "quality_checks": adjustment_quality_checks(record["id"], prepared, prepared=True),
+        "_coverage": {key: value for key, value in coverage.items() if key != "covered_symbols"},
+    }
+
+
 def _enrich_frame_with_security_master(frame) -> object:
     current = frame.copy()
     current["symbol"] = current["symbol"].map(normalize_symbol)
@@ -528,17 +591,48 @@ async def sync_all_akshare_dataset(payload: AkshareAllDatasetRequest) -> dict:
         symbols = await run_in_threadpool(_active_sh_sz_symbols)
         if not symbols:
             raise ValueError("没有可同步的沪深 A 股证券主数据")
+        existing_record = await run_in_threadpool(_latest_all_market_dataset_by_name, payload.name)
+        existing_frame = None
+        existing_coverage = {"covered_symbols": []}
+        if existing_record:
+            existing_frame = await run_in_threadpool(load_csv, existing_record["path"])
+            existing_coverage = _all_market_coverage(existing_frame, symbols, payload.benchmark)
+        covered = set(existing_coverage.get("covered_symbols", []))
+        missing_symbols = [symbol for symbol in symbols if normalize_symbol(symbol) not in covered]
+        if not missing_symbols and existing_record and existing_frame is not None:
+            result = await run_in_threadpool(
+                _hydrate_dataset_response, existing_record, existing_frame, symbols, payload.benchmark
+            )
+            result["_sync_note"] = f"沪深全A已覆盖 {result['_coverage']['covered']} / {result['_coverage']['expected']} 只，无需补齐"
+            return result
+        batch_size = max(1, min(ALL_MARKET_SYNC_BATCH_SIZE, len(missing_symbols)))
+        batch_symbols = missing_symbols[:batch_size]
         frame = await run_in_threadpool(
             fetch_akshare_dataset,
-            symbols, payload.start_date, payload.end_date, payload.benchmark
+            batch_symbols, payload.start_date, payload.end_date, payload.benchmark
         )
-        actual_count = _ensure_all_market_sync_coverage(frame, symbols, payload.benchmark)
+        merged_frame = _merge_market_frames(existing_frame, frame)
+        coverage = _all_market_coverage(merged_frame, symbols, payload.benchmark)
+        previous_count = len(covered)
+        if coverage["covered"] <= previous_count:
+            raise ValueError(
+                f"本批未新增任何A股行情，当前仍为 {previous_count} / {coverage['expected']} 只。"
+                " 可能是 AkShare/网络限流，请稍后再试。"
+            )
     except (DataSourceError, ValueError) as error:
         logger.warning("akshare_all_sync_failed error=%s", error)
         raise HTTPException(status_code=502, detail=str(error)) from error
-    result = await run_in_threadpool(_persist_dataset, payload.name, frame, "akshare_all")
-    if actual_count < len(symbols):
-        result["_sync_note"] = f"请求 {len(symbols)} 只，成功获取 {actual_count} 只行情数据"
+    result = await run_in_threadpool(_persist_dataset, payload.name, merged_frame, "akshare_all")
+    if existing_record and result["id"] != existing_record["id"]:
+        await run_in_threadpool(_delete_dataset_record_and_file, existing_record)
+    result["_coverage"] = {key: value for key, value in coverage.items() if key != "covered_symbols"}
+    added_count = coverage["covered"] - previous_count
+    if coverage["covered"] < len(symbols):
+        result["_sync_note"] = (
+            f"本批尝试 {len(batch_symbols)} 只，新增 {added_count} 只；"
+            f"累计覆盖 {coverage['covered']} / {coverage['expected']} 只。"
+            " 可继续点击「同步沪深全A」补齐剩余股票。"
+        )
     return result
 
 

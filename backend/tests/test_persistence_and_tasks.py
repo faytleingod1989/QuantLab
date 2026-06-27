@@ -238,6 +238,36 @@ def test_all_market_sync_rejects_low_coverage_snapshot():
     assert "请求 10 只，成功获取 2 只" in error.value.detail
 
 
+def test_all_market_coverage_excludes_benchmark_and_merge_deduplicates():
+    from backend import app as app_module
+
+    requested = ["600000.SH", "600001.SH", "600002.SH"]
+    first = pd.concat(
+        [
+            sample_daily("600000.SH", "2024-01-01", "2024-01-10"),
+            sample_daily("000300.SH", "2024-01-01", "2024-01-10"),
+        ],
+        ignore_index=True,
+    )
+    second = pd.concat(
+        [
+            sample_daily("600000.SH", "2024-01-01", "2024-01-10"),
+            sample_daily("600001.SH", "2024-01-01", "2024-01-10"),
+            sample_daily("000300.SH", "2024-01-01", "2024-01-10"),
+        ],
+        ignore_index=True,
+    )
+
+    merged = app_module._merge_market_frames(first, second)
+    coverage = app_module._all_market_coverage(merged, requested, "000300.SH")
+
+    assert coverage["expected"] == 3
+    assert coverage["covered"] == 2
+    assert coverage["missing"] == 1
+    assert coverage["covered_symbols"] == ["600000.SH", "600001.SH"]
+    assert not merged.duplicated(["symbol", "trade_date"]).any()
+
+
 def test_real_security_master_overrides_demo_seed_listing_date(tmp_path):
     repository = BacktestRepository(tmp_path / "quantlab.db")
     repository.upsert_securities(

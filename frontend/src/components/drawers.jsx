@@ -824,6 +824,11 @@ export function DataDrawer({
     [securities, settings.benchmark]
   );
   const allMarketPoolCount = stockPools.find((pool) => pool.id === "all_a")?.symbols.length || 0;
+  const hasPartialAllMarketDataset = datasets.some((dataset) => (
+    dataset.source === "akshare_all" &&
+    allMarketPoolCount &&
+    Math.max(0, Number(dataset.symbol_count || 0) - 1) < Math.ceil(allMarketPoolCount * 0.9)
+  ));
   const activePoolId = useMemo(() => {
     const selected = new Set(settings.symbols);
     return stockPools.find((pool) => (
@@ -858,7 +863,7 @@ export function DataDrawer({
           </div>
           <div className="data-actions">
             <button className="ghost" onClick={onSync} disabled={!source?.akshare_available || syncing || syncingAll}>{syncing ? "同步中…" : "同步所选"}</button>
-            <button className="ghost" onClick={onSyncAll} disabled={!source?.akshare_available || syncing || syncingAll}>{syncingAll ? "全A同步中…" : "同步沪深全A"}</button>
+            <button className="ghost" onClick={onSyncAll} disabled={!source?.akshare_available || syncing || syncingAll}>{syncingAll ? "全A补齐中…" : hasPartialAllMarketDataset ? "继续补齐全A" : "同步沪深全A"}</button>
             <label className="csv-upload">
               <input type="file" accept=".csv,text/csv" onChange={onImport} disabled={importing} />
               {importing ? "正在校验…" : "导入 CSV"}
@@ -876,14 +881,15 @@ export function DataDrawer({
             <span>离线生成 · 5 只示例股票</span>
           </button>
           {datasets.map((dataset) => {
-            const lowCoverage = dataset.source === "akshare_all" && allMarketPoolCount && dataset.symbol_count < Math.ceil(allMarketPoolCount * 0.9);
+            const coveredCount = Math.max(0, Number(dataset.symbol_count || 0) - (dataset.source === "akshare_all" ? 1 : 0));
+            const lowCoverage = dataset.source === "akshare_all" && allMarketPoolCount && coveredCount < Math.ceil(allMarketPoolCount * 0.9);
             return (
               <div key={dataset.id} className={`dataset-card ${settings.dataset_id === dataset.id ? "selected" : ""} ${lowCoverage ? "warning" : ""}`}>
                 <button className="dataset-select" onClick={() => onSelectDataset(dataset)}>
                   <b>{dataset.name}</b>
-                  <span>{dataset.source === "akshare" || dataset.source === "akshare_all" ? "AkShare" : "CSV"} · {dataset.symbol_count} 标的 · {dataset.row_count} 行{dataset.source === "akshare_all" && allMarketPoolCount ? ` · 覆盖 ${dataset.symbol_count}/${allMarketPoolCount}` : ""}</span>
+                  <span>{dataset.source === "akshare" || dataset.source === "akshare_all" ? "AkShare" : "CSV"} · {dataset.symbol_count} 标的 · {dataset.row_count} 行{dataset.source === "akshare_all" && allMarketPoolCount ? ` · A股覆盖 ${coveredCount}/${allMarketPoolCount}` : ""}</span>
                   <small>{dataset.start_date} — {dataset.end_date}</small>
-                  {lowCoverage ? <small className="dataset-warning">全A快照覆盖不足，建议删除后重新同步。</small> : null}
+                  {lowCoverage ? <small className="dataset-warning">全A快照覆盖不足，可继续点击同步补齐剩余股票。</small> : null}
                 </button>
                 <button className="dataset-delete" onClick={() => onDeleteDataset(dataset)} aria-label={`删除 ${dataset.name}`} title="删除快照">
                   <Trash size={14} />
