@@ -344,7 +344,7 @@ def test_repository_deletes_dataset_and_related_rows(tmp_path):
     assert repository.list_security_daily_status("600519.SH") == []
 
 
-def test_security_lifecycle_validation_rejects_pre_listing_and_delisted(tmp_path):
+def test_security_lifecycle_validation_allows_partial_listing_overlap(tmp_path):
     repository = BacktestRepository(tmp_path / "quantlab.db")
     repository.upsert_securities(
         [
@@ -360,10 +360,14 @@ def test_security_lifecycle_validation_rejects_pre_listing_and_delisted(tmp_path
             }
         ]
     )
-    pre_listing = repository.validate_security_window(["600000.SH"], "2024-01-02", "2024-01-31")
-    post_delist = repository.validate_security_window(["600000.SH"], "2024-06-01", "2024-07-31")
-    assert "尚未上市" in pre_listing[0]
-    assert "已退市" in post_delist[0]
+    starts_before_listing = repository.validate_security_window(["600000.SH"], "2024-01-02", "2024-01-31")
+    ends_after_delist = repository.validate_security_window(["600000.SH"], "2024-06-01", "2024-07-31")
+    listed_after_window = repository.validate_security_window(["600000.SH"], "2024-01-02", "2024-01-09")
+    delisted_before_window = repository.validate_security_window(["600000.SH"], "2024-07-01", "2024-07-31")
+    assert starts_before_listing == []
+    assert ends_after_delist == []
+    assert "尚未上市" in listed_after_window[0]
+    assert "已退市" in delisted_before_window[0]
 
 
 def test_async_task_completes_and_persists_result(tmp_path):

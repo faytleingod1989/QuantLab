@@ -660,10 +660,10 @@ class BacktestRepository:
             if not security:
                 errors.append(f"{symbol} 缺少证券主数据")
                 continue
-            if security["listed_date"] and start_date < security["listed_date"]:
-                errors.append(f"{symbol} 在回测开始日尚未上市，上市日为 {security['listed_date']}")
-            if security["delisted_date"] and end_date > security["delisted_date"]:
-                errors.append(f"{symbol} 在回测结束日前已退市，退市日为 {security['delisted_date']}")
+            if security["listed_date"] and end_date < security["listed_date"]:
+                errors.append(f"{symbol} 在回测区间内尚未上市，上市日为 {security['listed_date']}")
+            if security["delisted_date"] and start_date > security["delisted_date"]:
+                errors.append(f"{symbol} 在回测区间开始前已退市，退市日为 {security['delisted_date']}")
         return errors
 
     @staticmethod
