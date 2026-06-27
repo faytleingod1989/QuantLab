@@ -529,27 +529,44 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
             <input type="file" accept="application/json,.json" onChange={importStrategyFile} />
             导入 JSON
           </label>
-          <label>最大持股<input type="number" min="1" max="200" value={strategy.max_hold_num || ""} onChange={(event) => updateStrategyField("max_hold_num", event.target.value ? Number(event.target.value) : null)} /></label>
-          <label>排序
-            <select value={strategy.candidate_sort || "none"} onChange={(event) => updateStrategyField("candidate_sort", event.target.value)}>
-              <option value="none">不排序</option>
-              <option value="return_asc">近N日涨幅升序</option>
-              <option value="return_desc">近N日涨幅降序</option>
-            </select>
-          </label>
-          <label>排序窗口<input type="number" min="2" max="500" value={strategy.sort_window || 20} onChange={(event) => updateStrategyField("sort_window", Number(event.target.value))} /></label>
-          <label>买入组间
-            <select value={strategy.buy_group_logic || "any"} onChange={(event) => updateStrategyField("buy_group_logic", event.target.value)}>
-              <option value="any">任一组满足</option>
-              <option value="all">全部组满足</option>
-            </select>
-          </label>
-          <label>卖出组间
-            <select value={strategy.sell_group_logic || "any"} onChange={(event) => updateStrategyField("sell_group_logic", event.target.value)}>
-              <option value="any">任一组满足</option>
-              <option value="all">全部组满足</option>
-            </select>
-          </label>
+        </div>
+        <div className="strategy-module-config">
+          <section>
+            <div>
+              <span>选股策略</span>
+              <b>股票池、过滤与候选排序</b>
+              <small>决定候选股票如何进入交易模块。</small>
+            </div>
+            <label>最多持股<input type="number" min="1" max="200" value={strategy.max_hold_num || ""} onChange={(event) => updateStrategyField("max_hold_num", event.target.value ? Number(event.target.value) : null)} /></label>
+            <label>候选排序
+              <select value={strategy.candidate_sort || "none"} onChange={(event) => updateStrategyField("candidate_sort", event.target.value)}>
+                <option value="none">不排序</option>
+                <option value="return_asc">近N日涨幅升序（回撤优先）</option>
+                <option value="return_desc">近N日涨幅降序（强势优先）</option>
+              </select>
+            </label>
+            <label>排序窗口<input type="number" min="2" max="500" value={strategy.sort_window || 20} onChange={(event) => updateStrategyField("sort_window", Number(event.target.value))} /></label>
+          </section>
+          <section>
+            <div>
+              <span>交易策略</span>
+              <b>买入、卖出、仓位与风控</b>
+              <small>决定信号如何执行，以及如何管理风险。</small>
+            </div>
+            <label>买入组间
+              <select value={strategy.buy_group_logic || "any"} onChange={(event) => updateStrategyField("buy_group_logic", event.target.value)}>
+                <option value="any">任一组满足</option>
+                <option value="all">全部组满足</option>
+              </select>
+            </label>
+            <label>卖出组间
+              <select value={strategy.sell_group_logic || "any"} onChange={(event) => updateStrategyField("sell_group_logic", event.target.value)}>
+                <option value="any">任一组满足</option>
+                <option value="all">全部组满足</option>
+              </select>
+            </label>
+            <label>仓位摘要<input value={`总仓 ${Math.round(settings.max_position * 100)}% · 单票 ${Math.round((settings.max_symbol_position || 0.35) * 100)}%`} readOnly /></label>
+          </section>
         </div>
         <div className="strategy-json-panel">
           <textarea
