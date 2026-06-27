@@ -76,6 +76,15 @@ function DataCenterPage({
   onDeleteDataset,
 }) {
   const selectedDataset = datasets.find((item) => item.id === settings.dataset_id);
+  const syncableAllMarketCount = securities.filter((item) => (
+    isSyncableShSzSecurity(item) && item.symbol !== settings.benchmark
+  )).length;
+  const selectedCoverage = allMarketCoverage(selectedDataset, syncableAllMarketCount);
+  const snapshotNote = selectedDataset
+    ? selectedCoverage?.isLow
+      ? `当前快照覆盖不足：${selectedCoverage.syncedCount} / ${selectedCoverage.expectedCount} 标的`
+      : `当前：${selectedDataset.name}`
+    : "当前使用演示数据";
   return (
     <section className="view-page">
       <div className="view-hero">
@@ -92,28 +101,33 @@ function DataCenterPage({
         </div>
       </div>
       <div className="page-card-grid">
-        <PageCard title="数据快照" value={`${datasets.length} 个`} note={selectedDataset ? `当前：${selectedDataset.name}` : "当前使用演示数据"} />
-        <PageCard title="股票池主表" value={`${securities.length} 只`} note="支持沪深 A 股，北交所暂不纳入全 A 同步" />
+        <PageCard title="数据快照" value={`${datasets.length} 个`} note={snapshotNote} />
+        <PageCard title="沪深可同步股票" value={`${syncableAllMarketCount || securities.length} 只`} note={syncableAllMarketCount ? `主表总计 ${securities.length} 只；北交所/退市不纳入全 A 同步` : "等待证券主表加载"} />
         <PageCard title="数据源状态" value={source?.akshare_available ? "AkShare 可用" : "本地/演示"} note={source?.message || "等待数据源检测"} />
         <PageCard title="质量检查" value={`${datasetQuality?.quality_checks?.length || 0} 项`} note={settings.dataset_id ? "固定快照质量记录" : "演示数据暂无固定检查"} />
       </div>
       <div className="view-panel">
         <div className="panel-head"><b>最近数据集</b><span>可直接选择或删除旧快照；重复同步会复用相同指纹快照</span></div>
         <div className="mini-list">
-          {datasets.length ? datasets.slice(0, 6).map((dataset) => (
-            <div key={dataset.id} className={`dataset-row-mini ${settings.dataset_id === dataset.id ? "selected" : ""}`}>
-              <span>
-                <b>{dataset.name}</b>
-                <small>{dataset.source === "akshare_all" ? "沪深全A" : dataset.source === "akshare" ? "AkShare" : "CSV"} · {dataset.symbol_count} 标的 · {dataset.row_count} 行 · {dataset.start_date} — {dataset.end_date}</small>
-              </span>
-              <div>
-                <button className="ghost" onClick={() => onSelectDataset(dataset)} disabled={settings.dataset_id === dataset.id}>
-                  {settings.dataset_id === dataset.id ? "使用中" : "选择"}
-                </button>
-                <button className="danger-ghost" onClick={() => onDeleteDataset(dataset)}>删除</button>
+          {datasets.length ? datasets.slice(0, 6).map((dataset) => {
+            const coverage = allMarketCoverage(dataset, syncableAllMarketCount);
+            const coverageText = coverage ? ` · 覆盖 ${coverage.syncedCount} / ${coverage.expectedCount}` : "";
+            return (
+              <div key={dataset.id} className={`dataset-row-mini ${settings.dataset_id === dataset.id ? "selected" : ""} ${coverage?.isLow ? "warning" : ""}`}>
+                <span>
+                  <b>{dataset.name}</b>
+                  <small>{dataset.source === "akshare_all" ? "沪深全A" : dataset.source === "akshare" ? "AkShare" : "CSV"} · {dataset.symbol_count} 标的 · {dataset.row_count} 行 · {dataset.start_date} — {dataset.end_date}{coverageText}</small>
+                  {coverage?.isLow ? <small className="dataset-warning">全A快照覆盖不足，当前只有部分行情；建议删除后重新同步。</small> : null}
+                </span>
+                <div>
+                  <button className="ghost" onClick={() => onSelectDataset(dataset)} disabled={settings.dataset_id === dataset.id}>
+                    {settings.dataset_id === dataset.id ? "使用中" : "选择"}
+                  </button>
+                  <button className="danger-ghost" onClick={() => onDeleteDataset(dataset)}>删除</button>
+                </div>
               </div>
-            </div>
-          )) : <em>暂无固定数据快照，可打开数据管理同步沪深全 A 或导入 CSV。</em>}
+            );
+          }) : <em>暂无固定数据快照，可打开数据管理同步沪深全 A 或导入 CSV。</em>}
         </div>
       </div>
     </section>
@@ -253,6 +267,21 @@ function ReportsPage({ result, onExportReport }) {
       </div>
     </section>
   );
+}
+
+function isSyncableShSzSecurity(item) {
+  return ["SH", "SZ"].includes(String(item.exchange || "").toUpperCase()) && item.status !== "delisted";
+}
+
+function allMarketCoverage(dataset, expectedCount) {
+  if (!dataset || dataset.source !== "akshare_all" || !expectedCount) return null;
+  const syncedCount = Number(dataset.symbol_count || 0);
+  return {
+    expectedCount,
+    syncedCount,
+    ratio: syncedCount / expectedCount,
+    isLow: syncedCount < Math.ceil(expectedCount * 0.9),
+  };
 }
 
 const indicatorLabels = {

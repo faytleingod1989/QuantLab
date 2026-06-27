@@ -139,6 +139,7 @@ describe("stock pool helpers", () => {
     { symbol: "000001.SZ", name: "平安银行", exchange: "SZ", board: "深主板" },
     { symbol: "300750.SZ", name: "宁德时代", exchange: "SZ", board: "创业板" },
     { symbol: "301001.SZ", name: "凯淳股份", exchange: "SZ", board: "" },
+    { symbol: "600001.SH", name: "退市示例", exchange: "SH", board: "沪市主板", status: "delisted" },
     { symbol: "830799.BJ", name: "艾融软件", exchange: "BJ", board: "北交所" },
   ];
 

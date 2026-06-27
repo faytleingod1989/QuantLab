@@ -739,6 +739,9 @@ function getSecurityParts(item) {
 
 export function securityBelongsToPool(item, poolId) {
   const { code, exchange, board } = getSecurityParts(item);
+  if (item?.status === "delisted") {
+    return false;
+  }
   if (poolId === "all_a") {
     return exchange === "SH" || exchange === "SZ";
   }
@@ -820,6 +823,7 @@ export function DataDrawer({
       })),
     [securities, settings.benchmark]
   );
+  const allMarketPoolCount = stockPools.find((pool) => pool.id === "all_a")?.symbols.length || 0;
   const activePoolId = useMemo(() => {
     const selected = new Set(settings.symbols);
     return stockPools.find((pool) => (
@@ -871,18 +875,22 @@ export function DataDrawer({
             <b>可复现演示数据</b>
             <span>离线生成 · 5 只示例股票</span>
           </button>
-          {datasets.map((dataset) => (
-            <div key={dataset.id} className={`dataset-card ${settings.dataset_id === dataset.id ? "selected" : ""}`}>
-              <button className="dataset-select" onClick={() => onSelectDataset(dataset)}>
-                <b>{dataset.name}</b>
-                <span>{dataset.source === "akshare" || dataset.source === "akshare_all" ? "AkShare" : "CSV"} · {dataset.symbol_count} 标的 · {dataset.row_count} 行</span>
-                <small>{dataset.start_date} — {dataset.end_date}</small>
-              </button>
-              <button className="dataset-delete" onClick={() => onDeleteDataset(dataset)} aria-label={`删除 ${dataset.name}`} title="删除快照">
-                <Trash size={14} />
-              </button>
-            </div>
-          ))}
+          {datasets.map((dataset) => {
+            const lowCoverage = dataset.source === "akshare_all" && allMarketPoolCount && dataset.symbol_count < Math.ceil(allMarketPoolCount * 0.9);
+            return (
+              <div key={dataset.id} className={`dataset-card ${settings.dataset_id === dataset.id ? "selected" : ""} ${lowCoverage ? "warning" : ""}`}>
+                <button className="dataset-select" onClick={() => onSelectDataset(dataset)}>
+                  <b>{dataset.name}</b>
+                  <span>{dataset.source === "akshare" || dataset.source === "akshare_all" ? "AkShare" : "CSV"} · {dataset.symbol_count} 标的 · {dataset.row_count} 行{dataset.source === "akshare_all" && allMarketPoolCount ? ` · 覆盖 ${dataset.symbol_count}/${allMarketPoolCount}` : ""}</span>
+                  <small>{dataset.start_date} — {dataset.end_date}</small>
+                  {lowCoverage ? <small className="dataset-warning">全A快照覆盖不足，建议删除后重新同步。</small> : null}
+                </button>
+                <button className="dataset-delete" onClick={() => onDeleteDataset(dataset)} aria-label={`删除 ${dataset.name}`} title="删除快照">
+                  <Trash size={14} />
+                </button>
+              </div>
+            );
+          })}
         </div>
         {!settings.dataset_id ? (
           <>

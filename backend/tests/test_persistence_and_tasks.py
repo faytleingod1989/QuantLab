@@ -216,6 +216,28 @@ def test_all_market_sync_symbol_pool_uses_active_sh_sz_only(monkeypatch):
     assert fake_repository.synced_records == records
 
 
+def test_all_market_sync_rejects_low_coverage_snapshot():
+    from fastapi import HTTPException
+    from backend import app as app_module
+
+    requested = [f"600{i:03d}.SH" for i in range(10)]
+    partial = pd.concat(
+        [
+            sample_daily("600000.SH", "2024-01-01", "2024-01-10"),
+            sample_daily("600001.SH", "2024-01-01", "2024-01-10"),
+            sample_daily("000300.SH", "2024-01-01", "2024-01-10"),
+        ],
+        ignore_index=True,
+    )
+
+    with pytest.raises(HTTPException) as error:
+        app_module._ensure_all_market_sync_coverage(partial, requested, "000300.SH")
+
+    assert error.value.status_code == 502
+    assert "全A行情同步覆盖不足" in error.value.detail
+    assert "请求 10 只，成功获取 2 只" in error.value.detail
+
+
 def test_real_security_master_overrides_demo_seed_listing_date(tmp_path):
     repository = BacktestRepository(tmp_path / "quantlab.db")
     repository.upsert_securities(

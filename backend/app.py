@@ -91,6 +91,7 @@ repository.upsert_securities(
 task_manager = BacktestTaskManager(
     repository, max_workers=int(os.getenv("QUANTLAB_BACKTEST_WORKERS", "2"))
 )
+MIN_ALL_MARKET_SYNC_COVERAGE = 0.8
 
 
 @asynccontextmanager
@@ -413,6 +414,24 @@ def _active_sh_sz_symbols() -> list[str]:
     return sorted(set(symbols))
 
 
+def _ensure_all_market_sync_coverage(frame, requested_symbols: list[str], benchmark: str) -> int:
+    requested = {normalize_symbol(symbol) for symbol in requested_symbols}
+    benchmark_symbol = normalize_symbol(benchmark)
+    synced = {normalize_symbol(symbol) for symbol in frame["symbol"].dropna().unique()}
+    actual = len((synced - {benchmark_symbol}) & requested)
+    expected = len(requested)
+    if expected and actual / expected < MIN_ALL_MARKET_SYNC_COVERAGE:
+        raise HTTPException(
+            status_code=502,
+            detail=(
+                f"全A行情同步覆盖不足：请求 {expected} 只，成功获取 {actual} 只，"
+                f"低于 {int(MIN_ALL_MARKET_SYNC_COVERAGE * 100)}% 保存门槛。"
+                " 通常是 AkShare/网络限流或中途中断导致；本次快照未保存，请稍后重试。"
+            ),
+        )
+    return actual
+
+
 def _enrich_frame_with_security_master(frame) -> object:
     current = frame.copy()
     current["symbol"] = current["symbol"].map(normalize_symbol)
@@ -513,11 +532,11 @@ async def sync_all_akshare_dataset(payload: AkshareAllDatasetRequest) -> dict:
             fetch_akshare_dataset,
             symbols, payload.start_date, payload.end_date, payload.benchmark
         )
+        actual_count = _ensure_all_market_sync_coverage(frame, symbols, payload.benchmark)
     except (DataSourceError, ValueError) as error:
         logger.warning("akshare_all_sync_failed error=%s", error)
         raise HTTPException(status_code=502, detail=str(error)) from error
     result = await run_in_threadpool(_persist_dataset, payload.name, frame, "akshare_all")
-    actual_count = result.get("summary", {}).get("symbol_count", 0)
     if actual_count < len(symbols):
         result["_sync_note"] = f"请求 {len(symbols)} 只，成功获取 {actual_count} 只行情数据"
     return result
