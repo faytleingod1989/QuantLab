@@ -19,8 +19,10 @@ class RuleCondition(BaseModel):
         "return_between",
         "kline_up_ratio",
         "body_amplitude",
+        "range_amplitude",
         "price_ma_deviation",
         "volume_return_spike",
+        "volume_down_spike",
         "life_line_watch",
     ] = "ma_cross"
     operator: Literal["cross_above", "cross_below", "above", "below"] = "cross_above"
@@ -67,7 +69,9 @@ class RuleCondition(BaseModel):
             "volume_max_vs_ma",
             "kline_up_ratio",
             "body_amplitude",
+            "range_amplitude",
             "volume_return_spike",
+            "volume_down_spike",
         }:
             if self.threshold <= 0:
                 raise ValueError("倍率/阈值必须大于 0")

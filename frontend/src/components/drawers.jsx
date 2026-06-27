@@ -133,9 +133,11 @@ const indicatorOptions = [
   ["volume_max_vs_ma", "区间最大量/均量"],
   ["return_between", "区间收益率"],
   ["kline_up_ratio", "阳线优势"],
+  ["range_amplitude", "区间振幅"],
   ["body_amplitude", "实体振幅"],
   ["price_ma_deviation", "价格偏离均线"],
   ["volume_return_spike", "放量大阳"],
+  ["volume_down_spike", "天量阴线"],
   ["life_line_watch", "生命线观察"],
 ];
 
@@ -157,9 +159,11 @@ export const indicatorDefaults = {
   volume_max_vs_ma: { left: 20, right: 20, threshold: 3 },
   return_between: { left: 1, right: 60, threshold: 50, lower: -0.01, upper: 0.05 },
   kline_up_ratio: { left: 10, right: 60, threshold: 1.5 },
+  range_amplitude: { left: 20, right: 60, threshold: 0.2 },
   body_amplitude: { left: 10, right: 60, threshold: 0.1 },
   price_ma_deviation: { left: 10, right: 60, threshold: 1.02 },
   volume_return_spike: { left: 10, right: 60, threshold: 3, lower: 0.07 },
+  volume_down_spike: { left: 10, right: 60, threshold: 3 },
   life_line_watch: { left: 20, right: 10, threshold: 3, lower: -0.01, upper: 1.8 },
 };
 
@@ -329,9 +333,11 @@ function RuleNode({ title, tone, condition, onChange, onRemove }) {
     volume_vs_ma: "均量倍率",
     volume_max_vs_ma: "最大量倍率",
     kline_up_ratio: "阳/阴倍率",
+    range_amplitude: "振幅阈值",
     body_amplitude: "最大实体阈值",
     price_ma_deviation: "均线倍率",
     volume_return_spike: "放量倍率",
+    volume_down_spike: "放量倍率",
     life_line_watch: "观察天数",
   }[indicator];
   const leftLabel = {
@@ -339,15 +345,17 @@ function RuleNode({ title, tone, condition, onChange, onRemove }) {
     volume_max_vs_ma: "统计窗口",
     return_between: "收益窗口",
     kline_up_ratio: "统计窗口",
+    range_amplitude: "统计窗口",
     body_amplitude: "统计窗口",
     price_ma_deviation: "均线周期",
     volume_return_spike: "均量周期",
+    volume_down_spike: "均量周期",
     life_line_watch: "生命线周期",
     bollinger: "周期",
     rsi: "RSI周期",
   }[indicator] || "短周期";
   const rightLabel = indicator === "life_line_watch" ? "均量周期" : "长周期";
-  const showRight = !["price_vs_ma", "rsi", "bollinger", "volume_vs_ma", "return_between", "kline_up_ratio", "body_amplitude", "price_ma_deviation", "volume_return_spike"].includes(indicator);
+  const showRight = !["price_vs_ma", "rsi", "bollinger", "volume_vs_ma", "return_between", "kline_up_ratio", "range_amplitude", "body_amplitude", "price_ma_deviation", "volume_return_spike", "volume_down_spike"].includes(indicator);
   const showRange = ["return_between", "life_line_watch"].includes(indicator);
   const showLower = indicator === "volume_return_spike";
   const rangeLabels = {

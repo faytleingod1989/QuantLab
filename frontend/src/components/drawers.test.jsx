@@ -121,6 +121,7 @@ describe("strategy JSON import/export helpers", () => {
       "control_pullback",
       "chip_stable_ma_stack",
       "box_breakout",
+      "neighbor_grandpa_trading",
     ]);
 
     for (const template of strategyTemplates) {

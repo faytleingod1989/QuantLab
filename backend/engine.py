@@ -116,10 +116,19 @@ def _condition(frame: pd.DataFrame, rule: RuleCondition) -> pd.Series:
         up_days = (frame["close"] > frame["open"]).rolling(rule.left).sum()
         down_days = (frame["close"] < frame["open"]).rolling(rule.left).sum()
         return up_days > down_days * float(rule.threshold)
+    if rule.indicator == "range_amplitude":
+        recent_high = frame["high"].rolling(rule.left).max()
+        recent_low = frame["low"].rolling(rule.left).min().replace(0, np.nan)
+        amplitude = recent_high / recent_low - 1
+        return amplitude > rule.threshold if rule.operator == "above" else amplitude < rule.threshold
     if rule.indicator == "body_amplitude":
         body = (frame["close"] - frame["open"]).abs() / frame["close"].replace(0, np.nan)
         recent_max = body.rolling(rule.left).max()
         return recent_max > rule.threshold if rule.operator == "above" else recent_max < rule.threshold
+    if rule.indicator == "volume_down_spike":
+        volume_spike = volume > volume.rolling(rule.left).mean() * float(rule.threshold)
+        down_body = frame["close"] < frame["open"]
+        return volume_spike & down_body
     value = _rsi(close, rule.left)
     if rule.operator == "cross_above":
         return (value > rule.threshold) & (value.shift(1) <= rule.threshold)

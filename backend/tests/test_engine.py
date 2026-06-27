@@ -82,6 +82,8 @@ def test_advanced_strategy_conditions_generate_expected_signals():
         {
             "trade_date": dates,
             "open": close * 0.995,
+            "high": close * 1.01,
+            "low": close * 0.99,
             "close": close,
             "signal_close": close,
             "volume": [1000] * 80 + [500] * 10,
@@ -90,8 +92,28 @@ def test_advanced_strategy_conditions_generate_expected_signals():
     assert _condition(frame, RuleCondition(indicator="ma_stack", operator="above", left=10, right=20, threshold=60)).iloc[-1]
     assert _condition(frame, RuleCondition(indicator="volume_vs_ma", operator="below", left=5, threshold=1.1)).iloc[-1]
     assert _condition(frame, RuleCondition(indicator="kline_up_ratio", operator="above", left=10, threshold=1.5)).iloc[-1]
+    assert _condition(frame, RuleCondition(indicator="range_amplitude", operator="below", left=5, threshold=0.1)).iloc[-1]
     assert _condition(frame, RuleCondition(indicator="body_amplitude", operator="below", left=10, threshold=0.1)).iloc[-1]
     assert _condition(frame, RuleCondition(indicator="price_ma_deviation", operator="below", left=10, threshold=1.05)).iloc[-1]
+
+
+def test_distribution_risk_indicators_detect_heavy_down_and_wide_range():
+    dates = pd.bdate_range("2024-01-02", periods=12)
+    close = pd.Series([10.0] * 11 + [9.2])
+    frame = pd.DataFrame(
+        {
+            "trade_date": dates,
+            "open": [10.0] * 12,
+            "high": [10.2] * 11 + [10.6],
+            "low": [9.9] * 11 + [9.0],
+            "close": close,
+            "signal_close": close,
+            "volume": [1000] * 11 + [4000],
+        }
+    )
+
+    assert _condition(frame, RuleCondition(indicator="volume_down_spike", operator="above", left=10, threshold=3)).iloc[-1]
+    assert _condition(frame, RuleCondition(indicator="range_amplitude", operator="above", left=1, threshold=0.1)).iloc[-1]
 
 
 def test_indicator_defaults_are_normalized_and_invalid_periods_rejected():
