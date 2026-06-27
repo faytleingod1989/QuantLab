@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { strategyTemplates } from "../appConfig.jsx";
 import {
   createStrategyExportPayload,
   normalizeImportedStrategy,
@@ -113,6 +114,21 @@ describe("strategy JSON import/export helpers", () => {
     expect(payload.schema).toBe("quantlab.visual_strategy");
     expect(payload.schema_version).toBe(1);
     expect(payload.strategy.name).toBe("导出策略");
+  });
+
+  it("keeps every built-in strategy template importable", () => {
+    expect(strategyTemplates.map((template) => template.id)).toEqual([
+      "control_pullback",
+      "chip_stable_ma_stack",
+      "box_breakout",
+    ]);
+
+    for (const template of strategyTemplates) {
+      const imported = normalizeImportedStrategy(template.strategy);
+      expect(imported.name).toBe(template.strategy.name);
+      expect(imported.buy_conditions.length).toBeGreaterThan(0);
+      expect(imported.sell_conditions.length).toBeGreaterThan(0);
+    }
   });
 });
 

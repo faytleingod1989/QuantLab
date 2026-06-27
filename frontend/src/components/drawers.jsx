@@ -13,7 +13,7 @@ import {
   X,
 } from "@phosphor-icons/react";
 
-import { controlPullbackTemplate } from "../appConfig";
+import { strategyTemplates } from "../appConfig";
 import { RateInput, SettingRow } from "./common";
 
 const STRATEGY_JSON_SCHEMA_VERSION = 1;
@@ -407,8 +407,10 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
   const [strategyJsonText, setStrategyJsonText] = useState("");
   const [strategyTransferStatus, setStrategyTransferStatus] = useState("");
   const [showJsonPanel, setShowJsonPanel] = useState(false);
+  const [selectedTemplateId, setSelectedTemplateId] = useState(strategyTemplates[0]?.id || "");
   const activeMode = mode === "selection" ? "selection" : "trading";
   const modeTitle = activeMode === "selection" ? "选股策略" : "交易策略";
+  const selectedTemplate = strategyTemplates.find((template) => template.id === selectedTemplateId) || strategyTemplates[0];
   const buyGroups = groupsForSide(strategy, "buy");
   const sellGroups = groupsForSide(strategy, "sell");
   const updateSideGroups = (side, updater) =>
@@ -469,16 +471,20 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
     ]);
   const removeGroup = (side, removeIndex) =>
     updateSideGroups(side, (groups) => groups.filter((_, index) => index !== removeIndex));
-  const applyControlPullbackTemplate = () =>
+  const applySelectedTemplate = () => {
+    const templateStrategy = selectedTemplate?.strategy;
+    if (!templateStrategy) return;
     setSettings((current) => ({
       ...current,
-      max_symbol_position: 1 / controlPullbackTemplate.max_hold_num,
+      max_symbol_position: templateStrategy.max_hold_num ? 1 / templateStrategy.max_hold_num : current.max_symbol_position,
       max_position: 1,
       stop_loss_pct: 0.08,
       take_profit_pct: 0,
       exclude_st: true,
-      strategy: JSON.parse(JSON.stringify(controlPullbackTemplate)),
+      strategy: JSON.parse(JSON.stringify(templateStrategy)),
     }));
+    setStrategyTransferStatus(`已套用模板「${selectedTemplate.title}」，保存后会形成新版本`);
+  };
   const updateStrategyField = (field, value) =>
     setSettings((current) => ({
       ...current,
@@ -530,7 +536,12 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
             <button className={activeMode === "selection" ? "active" : ""} onClick={() => setMode?.("selection")} role="tab" aria-selected={activeMode === "selection"}>选股策略</button>
             <button className={activeMode === "trading" ? "active" : ""} onClick={() => setMode?.("trading")} role="tab" aria-selected={activeMode === "trading"}>交易策略</button>
           </div>
-          <button className="ghost" onClick={applyControlPullbackTemplate}>套用「主力控盘回踩策略」模板</button>
+          <select className="strategy-template-select" value={selectedTemplateId} onChange={(event) => setSelectedTemplateId(event.target.value)} title={selectedTemplate?.description}>
+            {strategyTemplates.map((template) => (
+              <option key={template.id} value={template.id}>{template.title}</option>
+            ))}
+          </select>
+          <button className="ghost" onClick={applySelectedTemplate}>套用模板</button>
           <button className="ghost" onClick={() => setShowJsonPanel((current) => !current)}>{showJsonPanel ? "收起 JSON" : "粘贴导入"}</button>
           <button className="ghost" onClick={exportStrategy}>导出 JSON</button>
           <label className="strategy-json-upload">

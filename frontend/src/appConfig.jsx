@@ -73,6 +73,115 @@ export const controlPullbackTemplate = {
   ],
 };
 
+export const chipStableMaStackTemplate = {
+  name: "筹码稳定均线多头选股",
+  buy_logic: "all",
+  sell_logic: "any",
+  buy_group_logic: "all",
+  sell_group_logic: "any",
+  max_hold_num: 8,
+  candidate_sort: "return_asc",
+  sort_window: 20,
+  position_sizing: "equal_weight",
+  buy_groups: [
+    {
+      name: "趋势与控盘结构",
+      logic: "all",
+      conditions: [
+        { indicator: "ma_stack", operator: "above", left: 5, right: 20, threshold: 60 },
+        { indicator: "kline_up_ratio", operator: "above", left: 20, right: 60, threshold: 1.1 },
+      ],
+    },
+    {
+      name: "筹码稳定与低波动",
+      logic: "all",
+      conditions: [
+        { indicator: "volume_max_vs_ma", operator: "below", left: 5, right: 30, threshold: 1.5 },
+        { indicator: "body_amplitude", operator: "below", left: 10, right: 60, threshold: 0.05 },
+        { indicator: "return_between", operator: "above", left: 20, right: 60, threshold: 50, lower: -0.05, upper: 0.18 },
+        { indicator: "price_ma_deviation", operator: "below", left: 20, right: 60, threshold: 1.18 },
+      ],
+    },
+  ],
+  buy_conditions: [
+    { indicator: "ma_stack", operator: "above", left: 5, right: 20, threshold: 60 },
+    { indicator: "kline_up_ratio", operator: "above", left: 20, right: 60, threshold: 1.1 },
+    { indicator: "volume_max_vs_ma", operator: "below", left: 5, right: 30, threshold: 1.5 },
+    { indicator: "body_amplitude", operator: "below", left: 10, right: 60, threshold: 0.05 },
+    { indicator: "return_between", operator: "above", left: 20, right: 60, threshold: 50, lower: -0.05, upper: 0.18 },
+    { indicator: "price_ma_deviation", operator: "below", left: 20, right: 60, threshold: 1.18 },
+  ],
+  sell_conditions: [
+    { indicator: "price_vs_ma", operator: "below", left: 20, right: 60, threshold: 50 },
+    { indicator: "volume_return_spike", operator: "above", left: 10, right: 60, threshold: 3, lower: 0.07 },
+    { indicator: "body_amplitude", operator: "above", left: 1, right: 60, threshold: 0.1 },
+  ],
+};
+
+export const boxBreakoutTemplate = {
+  name: "蓄势箱体放量突破选股",
+  buy_logic: "all",
+  sell_logic: "any",
+  buy_group_logic: "all",
+  sell_group_logic: "any",
+  max_hold_num: 5,
+  candidate_sort: "return_desc",
+  sort_window: 10,
+  position_sizing: "equal_weight",
+  buy_groups: [
+    {
+      name: "蓄势箱体结构",
+      logic: "all",
+      conditions: [
+        { indicator: "return_between", operator: "above", left: 20, right: 60, threshold: 50, lower: -0.08, upper: 0.2 },
+        { indicator: "kline_up_ratio", operator: "above", left: 20, right: 60, threshold: 1.2 },
+        { indicator: "body_amplitude", operator: "below", left: 20, right: 60, threshold: 0.12 },
+      ],
+    },
+    {
+      name: "放量突破确认",
+      logic: "all",
+      conditions: [
+        { indicator: "volume_return_spike", operator: "above", left: 10, right: 60, threshold: 2, lower: 0.03 },
+        { indicator: "price_ma_deviation", operator: "above", left: 20, right: 60, threshold: 1.01 },
+      ],
+    },
+  ],
+  buy_conditions: [
+    { indicator: "return_between", operator: "above", left: 20, right: 60, threshold: 50, lower: -0.08, upper: 0.2 },
+    { indicator: "kline_up_ratio", operator: "above", left: 20, right: 60, threshold: 1.2 },
+    { indicator: "body_amplitude", operator: "below", left: 20, right: 60, threshold: 0.12 },
+    { indicator: "volume_return_spike", operator: "above", left: 10, right: 60, threshold: 2, lower: 0.03 },
+    { indicator: "price_ma_deviation", operator: "above", left: 20, right: 60, threshold: 1.01 },
+  ],
+  sell_conditions: [
+    { indicator: "price_vs_ma", operator: "below", left: 20, right: 60, threshold: 50 },
+    { indicator: "volume_return_spike", operator: "above", left: 10, right: 60, threshold: 3, lower: 0.07 },
+    { indicator: "body_amplitude", operator: "above", left: 1, right: 60, threshold: 0.1 },
+  ],
+};
+
+export const strategyTemplates = [
+  {
+    id: "control_pullback",
+    title: "主力控盘回踩策略",
+    description: "均线多头、缩量回踩、红肥绿瘦，适合波段跟踪。",
+    strategy: controlPullbackTemplate,
+  },
+  {
+    id: "chip_stable_ma_stack",
+    title: "筹码稳定均线多头选股",
+    description: "均线多头 + 阳线优势 + 低波动缩量，筛偏稳的控盘票。",
+    strategy: chipStableMaStackTemplate,
+  },
+  {
+    id: "box_breakout",
+    title: "蓄势箱体放量突破选股",
+    description: "先找箱体蓄势，再用放量大阳和站上均线确认启动。",
+    strategy: boxBreakoutTemplate,
+  },
+];
+
 export const navItems = [
   ["数据中心", Database],
   ["策略研究", Strategy],
