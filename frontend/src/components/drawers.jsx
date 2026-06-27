@@ -767,7 +767,6 @@ export function DataDrawer({
   const applySymbols = (symbols) =>
     setSettings((current) => ({
       ...current,
-      dataset_id: null,
       symbols,
     }));
   const selectPool = (pool) => applySymbols(pool.symbols);
@@ -776,7 +775,6 @@ export function DataDrawer({
   const toggle = (symbol) =>
     setSettings((current) => ({
       ...current,
-      dataset_id: null,
       symbols: current.symbols.includes(symbol)
         ? current.symbols.filter((item) => item !== symbol)
         : [...current.symbols, symbol],

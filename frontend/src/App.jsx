@@ -354,6 +354,14 @@ function App() {
   const runBacktest = async (candidateSignal) => {
     const signal = candidateSignal?.constructor?.name === "AbortSignal" ? candidateSignal : undefined;
     if (signal?.aborted) return;
+
+    // 没有固定数据集且股票数超过 5 只时，演示数据无法覆盖，自动回退到默认 5 只
+    if (!settings.dataset_id && settings.symbols.length > 5) {
+      setSettings((current) => ({ ...current, symbols: [...initialSettings.symbols] }));
+      setNotice(`演示数据仅支持 5 只预设股票，已自动重置为 ${initialSettings.symbols.join(", ")}；如需更多标的请先同步真实行情`);
+      return;
+    }
+
     let taskId = null;
     const cancelSubmittedTask = () => {
       if (taskId) fetch(`${API}/backtests/${taskId}/cancel`, { method: "POST" }).catch((error) => logIgnoredError("取消孤儿回测任务失败", error));
@@ -476,6 +484,11 @@ function App() {
 
   const syncAkshare = async (scope = "selected") => {
     const allMarket = scope === "all";
+    // 选股同步时检查数量上限
+    if (!allMarket && settings.symbols.length > 20) {
+      setNotice(`选股同步最多支持 20 只股票，当前选择了 ${settings.symbols.length} 只。请先缩小股票池，或使用「同步沪深全A」。`);
+      return;
+    }
     allMarket ? setSyncingAll(true) : setSyncing(true);
     setNotice("");
     try {
@@ -504,7 +517,7 @@ function App() {
       setDatasets((current) => [dataset, ...current.filter((item) => item.id !== dataset.id)]);
       applyDataset(dataset, dataset.summary.symbols);
       setDatasetQuality({ dataset, summary: dataset.summary, quality_checks: dataset.quality_checks || [] });
-      setNotice(dataset.duplicate ? "真实行情快照已存在并已选中" : `真实行情已同步：${dataset.summary.symbol_count} 标的，${dataset.summary.row_count} 行`);
+      setNotice(dataset.duplicate ? "真实行情快照已存在并已选中" : `真实行情已同步：${dataset.summary.symbol_count} 标的，${dataset.summary.row_count} 行${dataset._sync_note ? `（${dataset._sync_note}）` : ""}`);
     } catch (error) {
       setNotice(`同步失败：${errorMessage(error)}`);
     } finally {

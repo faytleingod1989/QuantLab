@@ -752,13 +752,18 @@ def fetch_trading_calendar(start_date: str, end_date: str, client=None) -> pd.Da
 def fetch_akshare_dataset(
     symbols: list[str], start_date: str, end_date: str, benchmark: str = "000300.SH", client=None
 ) -> pd.DataFrame:
-    """Fetch unadjusted A-share/index bars and return one normalized immutable snapshot."""
+    """Fetch unadjusted A-share/index bars and return one normalized immutable snapshot.
+
+    Individual stock fetch failures are skipped with a warning so that one
+    problematic symbol does not abort an entire multi-symbol sync.
+    """
     try:
         if client is None:
             import akshare as client
         compact_start = start_date.replace("-", "")
         compact_end = end_date.replace("-", "")
         frames: list[pd.DataFrame] = []
+        failed: list[str] = []
         for raw_symbol in symbols:
             symbol = normalize_symbol(raw_symbol)
             code = symbol.split(".")[0]
@@ -777,19 +782,26 @@ def fetch_akshare_dataset(
                 if "volume" in source.columns:
                     source["volume"] = source["volume"] * 100
             except Exception:
-                market_prefix = "sh" if symbol.endswith(".SH") else "sz"
-                source = client.stock_zh_a_daily(
-                    symbol=f"{market_prefix}{code}", start_date=compact_start,
-                    end_date=compact_end, adjust="",
-                ).rename(
-                    columns={
-                        "date": "trade_date", "open": "open", "high": "high", "low": "low",
-                        "close": "close", "volume": "volume", "amount": "amount",
-                        "name": "name", "名称": "name",
-                    }
-                )
+                try:
+                    market_prefix = "sh" if symbol.endswith(".SH") else "sz"
+                    source = client.stock_zh_a_daily(
+                        symbol=f"{market_prefix}{code}", start_date=compact_start,
+                        end_date=compact_end, adjust="",
+                    ).rename(
+                        columns={
+                            "date": "trade_date", "open": "open", "high": "high", "low": "low",
+                            "close": "close", "volume": "volume", "amount": "amount",
+                            "name": "name", "名称": "name",
+                        }
+                    )
+                except Exception:
+                    failed.append(symbol)
+                    logger.warning("akshare_symbol_fetch_failed symbol=%s", symbol)
+                    continue
             if source is None or source.empty:
-                raise DataSourceError(f"AkShare 未返回 {symbol} 的行情")
+                failed.append(symbol)
+                logger.warning("akshare_symbol_empty symbol=%s", symbol)
+                continue
             current = source.copy()
             current["symbol"] = symbol
             if "name" in current.columns:
@@ -818,7 +830,17 @@ def fetch_akshare_dataset(
             current["symbol"] = benchmark_symbol
             current["name"] = "沪深300" if benchmark_symbol == "000300.SH" else benchmark_symbol
             frames.append(current)
+        if not frames:
+            raise DataSourceError(
+                f"AkShare 未能获取任何行情数据，尝试了 {len(symbols)} 只标的均失败"
+            )
         combined = prepare_market_frame(pd.concat(frames, ignore_index=True))
+        if failed:
+            succeeded_count = len(symbols) - len(failed)
+            logger.warning(
+                "akshare_partial_fetch succeeded=%d failed=%d failed_symbols=%s",
+                succeeded_count, len(failed), ",".join(failed[:20]),
+            )
         calendar = fetch_trading_calendar(start_date, end_date, client=client)
         unexpected = set(combined["trade_date"].dt.normalize()) - set(calendar["trade_date"].dt.normalize())
         if unexpected:

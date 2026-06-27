@@ -252,7 +252,14 @@ def backtest(request: BacktestRequest) -> dict:
 def _validate_demo_symbols(request: BacktestRequest) -> None:
     unsupported = [symbol for symbol in request.symbols if symbol not in SAMPLE_NAMES]
     if unsupported:
-        raise HTTPException(status_code=400, detail=f"演示数据暂不包含: {', '.join(unsupported)}")
+        count = len(unsupported)
+        sample = ", ".join(unsupported[:5])
+        raise HTTPException(
+            status_code=400,
+            detail=f"演示数据仅支持 5 只预设股票（如 600519.SH），当前 {len(request.symbols)} 只中的 {count} 只无对应数据"
+            if count > 5
+            else f"演示数据暂不包含: {sample}",
+        )
 
 
 @app.post("/api/backtests", status_code=202)
@@ -479,6 +486,12 @@ def import_csv_dataset(payload: CsvDatasetRequest) -> dict:
 
 @app.post("/api/datasets/akshare", status_code=201)
 async def sync_akshare_dataset(payload: AkshareDatasetRequest) -> dict:
+    if len(payload.symbols) > 20:
+        raise HTTPException(
+            status_code=400,
+            detail=f"单次选股同步最多支持 20 只股票，当前选择了 {len(payload.symbols)} 只。"
+                   " 请先缩小股票池再试，或使用「同步沪深全A」。",
+        )
     try:
         frame = await run_in_threadpool(
             fetch_akshare_dataset,
@@ -503,7 +516,11 @@ async def sync_all_akshare_dataset(payload: AkshareAllDatasetRequest) -> dict:
     except (DataSourceError, ValueError) as error:
         logger.warning("akshare_all_sync_failed error=%s", error)
         raise HTTPException(status_code=502, detail=str(error)) from error
-    return await run_in_threadpool(_persist_dataset, payload.name, frame, "akshare_all")
+    result = await run_in_threadpool(_persist_dataset, payload.name, frame, "akshare_all")
+    actual_count = result.get("summary", {}).get("symbol_count", 0)
+    if actual_count < len(symbols):
+        result["_sync_note"] = f"请求 {len(symbols)} 只，成功获取 {actual_count} 只行情数据"
+    return result
 
 
 @app.delete("/api/datasets/{dataset_id}")
