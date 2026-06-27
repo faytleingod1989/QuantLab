@@ -209,6 +209,7 @@ class AkshareAllDatasetRequest(BaseModel):
     start_date: str
     end_date: str
     benchmark: str = "000300.SH"
+    base_dataset_id: str | None = None
 
     @model_validator(mode="after")
     def validate_dates(self):

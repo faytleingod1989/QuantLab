@@ -571,16 +571,22 @@ function App() {
     allMarket ? setSyncingAll(true) : setSyncing(true);
     setNotice("");
     try {
+      const allMarketName = `AkShare 沪深全A ${settings.start_date} 至 ${settings.end_date}`;
+      const baseAllMarketDataset = allMarket
+        ? datasets.find((item) => item.id === settings.dataset_id && item.source === "akshare_all" && item.name === allMarketName)
+          || datasets.find((item) => item.source === "akshare_all" && item.name === allMarketName)
+        : null;
       const response = await fetch(`${API}/datasets/akshare${allMarket ? "/all" : ""}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(
           allMarket
             ? {
-                name: `AkShare 沪深全A ${settings.start_date} 至 ${settings.end_date}`,
+                name: allMarketName,
                 start_date: settings.start_date,
                 end_date: settings.end_date,
                 benchmark: settings.benchmark,
+                base_dataset_id: baseAllMarketDataset?.id || null,
               }
             : {
                 name: `AkShare ${settings.start_date} 至 ${settings.end_date}`,
@@ -593,7 +599,10 @@ function App() {
       });
       if (!response.ok) throw new Error((await response.json()).detail || "AkShare 同步失败");
       const dataset = await response.json();
-      setDatasets((current) => [dataset, ...current.filter((item) => item.id !== dataset.id)]);
+      setDatasets((current) => {
+        const consolidatedIds = new Set(dataset._consolidated_dataset_ids || []);
+        return [dataset, ...current.filter((item) => item.id !== dataset.id && !consolidatedIds.has(item.id))];
+      });
       applyDataset(dataset, dataset.summary.symbols);
       setDatasetQuality({ dataset, summary: dataset.summary, quality_checks: dataset.quality_checks || [] });
       const coverageText = allMarket && dataset._coverage

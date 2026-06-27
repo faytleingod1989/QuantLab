@@ -449,11 +449,27 @@ def _all_market_coverage(frame, requested_symbols: list[str], benchmark: str) ->
     }
 
 
-def _latest_all_market_dataset_by_name(name: str) -> dict | None:
-    for dataset in repository.list_datasets():
-        if dataset.get("source") == "akshare_all" and dataset.get("name") == name:
-            return dataset
-    return None
+def _all_market_datasets_by_name(name: str) -> list[dict]:
+    return [
+        dataset
+        for dataset in repository.list_datasets()
+        if dataset.get("source") == "akshare_all" and dataset.get("name") == name
+    ]
+
+
+def _all_market_base_datasets(name: str, base_dataset_id: str | None) -> list[dict]:
+    datasets = _all_market_datasets_by_name(name)
+    if not base_dataset_id:
+        return datasets
+    base = repository.get_dataset(base_dataset_id)
+    if not base:
+        raise HTTPException(status_code=404, detail="要补齐的全A数据集不存在，请刷新后重试")
+    if base.get("source") != "akshare_all":
+        raise HTTPException(status_code=400, detail="只能在沪深全A快照基础上继续补齐")
+    if base.get("name") != name:
+        raise HTTPException(status_code=400, detail="当前全A快照的日期范围与本次同步不一致，请重新选择匹配的数据集")
+    rest = [dataset for dataset in datasets if dataset["id"] != base["id"]]
+    return [base, *rest]
 
 
 def _delete_dataset_record_and_file(record: dict) -> None:
@@ -481,18 +497,6 @@ def _merge_market_frames(existing_frame, new_frame):
         .drop_duplicates(["symbol", "trade_date"], keep="last")
         .reset_index(drop=True)
     )
-
-
-def _hydrate_dataset_response(record: dict, frame, requested_symbols: list[str], benchmark: str) -> dict:
-    prepared = prepare_market_frame(frame)
-    summary = dataset_summary(prepared, prepared=True)
-    coverage = _all_market_coverage(prepared, requested_symbols, benchmark)
-    return {
-        **record,
-        "summary": summary,
-        "quality_checks": adjustment_quality_checks(record["id"], prepared, prepared=True),
-        "_coverage": {key: value for key, value in coverage.items() if key != "covered_symbols"},
-    }
 
 
 def _enrich_frame_with_security_master(frame) -> object:
@@ -556,6 +560,38 @@ def _persist_dataset(name: str, frame, source: str) -> dict:
     return {**record, "duplicate": False, "summary": summary, "quality_checks": quality_checks}
 
 
+def _replace_dataset_snapshot(record: dict, frame, source: str) -> dict:
+    frame = _enrich_frame_with_security_master(frame)
+    normalized = frame.to_csv(index=False, date_format="%Y-%m-%d").encode("utf-8")
+    fingerprint = hashlib.sha256(normalized).hexdigest()
+    summary = dataset_summary(frame, prepared=True)
+    dataset_path = Path(record["path"])
+    dataset_path.parent.mkdir(parents=True, exist_ok=True)
+    dataset_path.write_bytes(normalized)
+    updated = repository.update_dataset(
+        record["id"],
+        {
+            "name": record["name"],
+            "path": str(dataset_path),
+            "fingerprint": fingerprint,
+            "row_count": summary["row_count"],
+            "symbol_count": summary["symbol_count"],
+            "start_date": summary["start_date"],
+            "end_date": summary["end_date"],
+            "source": source,
+        },
+    )
+    security_master = extract_security_master(frame, source, prepared=True)
+    repository.upsert_securities(security_master)
+    repository.upsert_industry_history(security_master)
+    repository.replace_security_daily_status(
+        record["id"], extract_security_daily_status(record["id"], frame, source, prepared=True)
+    )
+    quality_checks = adjustment_quality_checks(record["id"], frame, prepared=True)
+    repository.replace_dataset_quality_checks(record["id"], quality_checks)
+    return {**updated, "duplicate": False, "summary": summary, "quality_checks": quality_checks}
+
+
 @app.post("/api/datasets/csv", status_code=201)
 def import_csv_dataset(payload: CsvDatasetRequest) -> dict:
     try:
@@ -591,18 +627,33 @@ async def sync_all_akshare_dataset(payload: AkshareAllDatasetRequest) -> dict:
         symbols = await run_in_threadpool(_active_sh_sz_symbols)
         if not symbols:
             raise ValueError("没有可同步的沪深 A 股证券主数据")
-        existing_record = await run_in_threadpool(_latest_all_market_dataset_by_name, payload.name)
+        existing_records = await run_in_threadpool(
+            _all_market_base_datasets, payload.name, payload.base_dataset_id
+        )
+        existing_record = existing_records[0] if existing_records else None
+        duplicate_records = existing_records[1:]
         existing_frame = None
         existing_coverage = {"covered_symbols": []}
-        if existing_record:
-            existing_frame = await run_in_threadpool(load_csv, existing_record["path"])
+        for record in existing_records:
+            current_frame = await run_in_threadpool(load_csv, record["path"])
+            existing_frame = _merge_market_frames(existing_frame, current_frame)
+        if existing_frame is not None:
             existing_coverage = _all_market_coverage(existing_frame, symbols, payload.benchmark)
         covered = set(existing_coverage.get("covered_symbols", []))
         missing_symbols = [symbol for symbol in symbols if normalize_symbol(symbol) not in covered]
         if not missing_symbols and existing_record and existing_frame is not None:
             result = await run_in_threadpool(
-                _hydrate_dataset_response, existing_record, existing_frame, symbols, payload.benchmark
+                _replace_dataset_snapshot, existing_record, existing_frame, "akshare_all"
             )
+            for duplicate_record in duplicate_records:
+                await run_in_threadpool(_delete_dataset_record_and_file, duplicate_record)
+            result["_coverage"] = {
+                key: value
+                for key, value in _all_market_coverage(existing_frame, symbols, payload.benchmark).items()
+                if key != "covered_symbols"
+            }
+            if duplicate_records:
+                result["_consolidated_dataset_ids"] = [record["id"] for record in duplicate_records]
             result["_sync_note"] = f"沪深全A已覆盖 {result['_coverage']['covered']} / {result['_coverage']['expected']} 只，无需补齐"
             return result
         batch_size = max(1, min(ALL_MARKET_SYNC_BATCH_SIZE, len(missing_symbols)))
@@ -622,9 +673,14 @@ async def sync_all_akshare_dataset(payload: AkshareAllDatasetRequest) -> dict:
     except (DataSourceError, ValueError) as error:
         logger.warning("akshare_all_sync_failed error=%s", error)
         raise HTTPException(status_code=502, detail=str(error)) from error
-    result = await run_in_threadpool(_persist_dataset, payload.name, merged_frame, "akshare_all")
-    if existing_record and result["id"] != existing_record["id"]:
-        await run_in_threadpool(_delete_dataset_record_and_file, existing_record)
+    if existing_record:
+        result = await run_in_threadpool(_replace_dataset_snapshot, existing_record, merged_frame, "akshare_all")
+        for duplicate_record in duplicate_records:
+            await run_in_threadpool(_delete_dataset_record_and_file, duplicate_record)
+        if duplicate_records:
+            result["_consolidated_dataset_ids"] = [record["id"] for record in duplicate_records]
+    else:
+        result = await run_in_threadpool(_persist_dataset, payload.name, merged_frame, "akshare_all")
     result["_coverage"] = {key: value for key, value in coverage.items() if key != "covered_symbols"}
     added_count = coverage["covered"] - previous_count
     if coverage["covered"] < len(symbols):

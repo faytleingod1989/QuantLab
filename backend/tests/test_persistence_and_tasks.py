@@ -268,6 +268,33 @@ def test_all_market_coverage_excludes_benchmark_and_merge_deduplicates():
     assert not merged.duplicated(["symbol", "trade_date"]).any()
 
 
+def test_all_market_base_dataset_prefers_explicit_id_and_same_name(monkeypatch):
+    from fastapi import HTTPException
+    from backend import app as app_module
+
+    datasets = [
+        {"id": "newer", "name": "AkShare 沪深全A 2025", "source": "akshare_all"},
+        {"id": "selected", "name": "AkShare 沪深全A 2025", "source": "akshare_all"},
+        {"id": "other-date", "name": "AkShare 沪深全A 2024", "source": "akshare_all"},
+    ]
+
+    class FakeRepository:
+        def list_datasets(self):
+            return datasets
+
+        def get_dataset(self, dataset_id):
+            return next((item for item in datasets if item["id"] == dataset_id), None)
+
+    monkeypatch.setattr(app_module, "repository", FakeRepository())
+
+    selected = app_module._all_market_base_datasets("AkShare 沪深全A 2025", "selected")
+    assert [item["id"] for item in selected] == ["selected", "newer"]
+
+    with pytest.raises(HTTPException) as error:
+        app_module._all_market_base_datasets("AkShare 沪深全A 2025", "other-date")
+    assert error.value.status_code == 400
+
+
 def test_real_security_master_overrides_demo_seed_listing_date(tmp_path):
     repository = BacktestRepository(tmp_path / "quantlab.db")
     repository.upsert_securities(
@@ -394,6 +421,43 @@ def test_repository_deletes_dataset_and_related_rows(tmp_path):
     assert repository.get_dataset("dataset-1") is None
     assert repository.list_dataset_quality_checks("dataset-1") == []
     assert repository.list_security_daily_status("600519.SH") == []
+
+
+def test_repository_updates_dataset_in_place(tmp_path):
+    repository = BacktestRepository(tmp_path / "quantlab.db")
+    repository.create_dataset(
+        {
+            "id": "dataset-1",
+            "name": "snapshot",
+            "path": str(tmp_path / "snapshot.csv"),
+            "fingerprint": "sha-old",
+            "row_count": 10,
+            "symbol_count": 1,
+            "start_date": "2024-01-02",
+            "end_date": "2024-01-05",
+            "source": "akshare_all",
+        }
+    )
+
+    updated = repository.update_dataset(
+        "dataset-1",
+        {
+            "name": "snapshot",
+            "path": str(tmp_path / "snapshot.csv"),
+            "fingerprint": "sha-new",
+            "row_count": 25,
+            "symbol_count": 3,
+            "start_date": "2024-01-02",
+            "end_date": "2024-01-10",
+            "source": "akshare_all",
+        },
+    )
+
+    assert updated["id"] == "dataset-1"
+    assert updated["fingerprint"] == "sha-new"
+    assert updated["row_count"] == 25
+    assert updated["symbol_count"] == 3
+    assert len(repository.list_datasets()) == 1
 
 
 def test_security_lifecycle_validation_allows_partial_listing_overlap(tmp_path):

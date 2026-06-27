@@ -372,6 +372,29 @@ class BacktestRepository:
             )
         return self.get_dataset(dataset["id"])
 
+    def update_dataset(self, dataset_id: str, dataset: dict[str, Any]) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE datasets
+                SET name = ?, path = ?, fingerprint = ?, row_count = ?, symbol_count = ?,
+                    start_date = ?, end_date = ?, source = ?
+                WHERE id = ?
+                """,
+                (
+                    dataset["name"],
+                    dataset["path"],
+                    dataset["fingerprint"],
+                    dataset["row_count"],
+                    dataset["symbol_count"],
+                    dataset["start_date"],
+                    dataset["end_date"],
+                    dataset.get("source", "csv"),
+                    dataset_id,
+                ),
+            )
+        return self.get_dataset(dataset_id)
+
     def get_dataset(self, dataset_id: str) -> dict[str, Any] | None:
         with self._connect() as connection:
             row = connection.execute(
