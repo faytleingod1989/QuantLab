@@ -138,7 +138,10 @@ function StrategyResearchPage({ settings, strategyRecord, openStrategy }) {
           <h2>{settings.strategy.name}</h2>
           <p>策略研究按「选股策略」和「交易策略」组织：先确定候选股票，再定义买入、卖出、仓位和风控。</p>
         </div>
-        <button className="primary" onClick={openStrategy}>编辑策略</button>
+        <div className="view-actions">
+          <button className="ghost" onClick={() => openStrategy("selection")}>编辑选股</button>
+          <button className="primary" onClick={() => openStrategy("trading")}>编辑交易</button>
+        </div>
       </div>
       <div className="strategy-module-grid">
         <div className="strategy-module-card">
@@ -157,6 +160,7 @@ function StrategyResearchPage({ settings, strategyRecord, openStrategy }) {
             <small>最多持股</small>
             <b>{settings.strategy.max_hold_num || "不限"} 只</b>
           </div>
+          <button className="ghost" onClick={() => openStrategy("selection")}>编辑选股策略</button>
         </div>
         <div className="strategy-module-card">
           <span>TRADING RULES</span>
@@ -174,6 +178,7 @@ function StrategyResearchPage({ settings, strategyRecord, openStrategy }) {
             <small>仓位风控</small>
             <b>总仓 {Math.round(settings.max_position * 100)}% · 单票 {Math.round((settings.max_symbol_position || 0.35) * 100)}%</b>
           </div>
+          <button className="primary" onClick={() => openStrategy("trading")}>编辑交易策略</button>
         </div>
       </div>
       <div className="page-card-grid">
@@ -384,6 +389,7 @@ function App() {
   const [syncingAll, setSyncingAll] = useState(false);
   const [strategyRecord, setStrategyRecord] = useState(null);
   const [savingStrategy, setSavingStrategy] = useState(false);
+  const [strategyEditorMode, setStrategyEditorMode] = useState("trading");
   const [booting, setBooting] = useState(true);
   const [comparisons, setComparisons] = useState([]);
 
@@ -741,13 +747,18 @@ function App() {
     setDrawer(null);
   };
 
+  const openStrategyEditor = (mode = "trading") => {
+    setStrategyEditorMode(mode);
+    setDrawer("strategy");
+  };
+
   const openWorkflowStep = (index) => {
     if (index === 0) {
       setActiveView("data");
       setDrawer("data");
     } else if (index === 1) {
       setActiveView("strategy");
-      setDrawer("strategy");
+      openStrategyEditor("selection");
     } else if (index === 4) {
       setActiveView("results");
       setDrawer(null);
@@ -776,7 +787,7 @@ function App() {
       );
     }
     if (activeView === "strategy") {
-      return <StrategyResearchPage settings={settings} strategyRecord={strategyRecord} openStrategy={() => setDrawer("strategy")} />;
+      return <StrategyResearchPage settings={settings} strategyRecord={strategyRecord} openStrategy={openStrategyEditor} />;
     }
     if (activeView === "results") {
       return <ResultsAnalysisPage result={result} settings={settings} running={running} metrics={metrics} chartData={chartData} years={years} comparisons={comparisons} onRun={runBacktest} />;
@@ -785,7 +796,7 @@ function App() {
       return <ReportsPage result={result} onExportReport={exportReport} />;
     }
     if (activeView === "factors") {
-      return <FactorAnalysisPage settings={settings} result={result} openStrategy={() => setDrawer("strategy")} />;
+      return <FactorAnalysisPage settings={settings} result={result} openStrategy={() => openStrategyEditor("trading")} />;
     }
     if (activeView === "portfolio") {
       return (
@@ -848,7 +859,9 @@ function App() {
           onSave={saveStrategy}
           saving={savingStrategy}
           versionInfo={strategyRecord?.latest_version ? `v${strategyRecord.latest_version.version}` : null}
-        close={() => setDrawer(null)}
+          mode={strategyEditorMode}
+          setMode={setStrategyEditorMode}
+          close={() => setDrawer(null)}
         />
       ) : null}
       {drawer === "data" ? (

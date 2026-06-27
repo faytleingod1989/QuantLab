@@ -402,10 +402,13 @@ function RuleNode({ title, tone, condition, onChange, onRemove }) {
   );
 }
 
-export function StrategyModal({ settings, setSettings, onSave, saving, versionInfo, close }) {
+export function StrategyModal({ settings, setSettings, onSave, saving, versionInfo, mode = "trading", setMode, close }) {
   const strategy = settings.strategy;
   const [strategyJsonText, setStrategyJsonText] = useState("");
   const [strategyTransferStatus, setStrategyTransferStatus] = useState("");
+  const [showJsonPanel, setShowJsonPanel] = useState(false);
+  const activeMode = mode === "selection" ? "selection" : "trading";
+  const modeTitle = activeMode === "selection" ? "选股策略" : "交易策略";
   const buyGroups = groupsForSide(strategy, "buy");
   const sellGroups = groupsForSide(strategy, "sell");
   const updateSideGroups = (side, updater) =>
@@ -517,67 +520,89 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
         <div className="modal-head">
           <div>
             <span className="eyebrow">可视化策略</span>
-            <h2>配置「{strategy.name}」</h2>
-            <p>使用自然语言式条件组合，无需编写代码。{versionInfo ? ` 当前 ${versionInfo}` : " 尚未保存版本"}</p>
+            <h2>配置「{strategy.name}」· {modeTitle}</h2>
+            <p>{activeMode === "selection" ? "先确定候选股票与排序，再交给交易策略执行。" : "编辑买入、卖出、仓位和风控规则。"}{versionInfo ? ` 当前 ${versionInfo}` : " 尚未保存版本"}</p>
           </div>
           <button className="icon-button" onClick={close}><X size={20} /></button>
         </div>
         <div className="strategy-template-bar">
+          <div className="strategy-mode-tabs" role="tablist" aria-label="策略编辑模块">
+            <button className={activeMode === "selection" ? "active" : ""} onClick={() => setMode?.("selection")} role="tab" aria-selected={activeMode === "selection"}>选股策略</button>
+            <button className={activeMode === "trading" ? "active" : ""} onClick={() => setMode?.("trading")} role="tab" aria-selected={activeMode === "trading"}>交易策略</button>
+          </div>
           <button className="ghost" onClick={applyControlPullbackTemplate}>套用「主力控盘回踩策略」模板</button>
+          <button className="ghost" onClick={() => setShowJsonPanel((current) => !current)}>{showJsonPanel ? "收起 JSON" : "粘贴导入"}</button>
           <button className="ghost" onClick={exportStrategy}>导出 JSON</button>
           <label className="strategy-json-upload">
             <input type="file" accept="application/json,.json" onChange={importStrategyFile} />
             导入 JSON
           </label>
         </div>
-        <div className="strategy-module-config">
-          <section>
-            <div>
-              <span>选股策略</span>
-              <b>股票池、过滤与候选排序</b>
-              <small>决定候选股票如何进入交易模块。</small>
-            </div>
-            <label>最多持股<input type="number" min="1" max="200" value={strategy.max_hold_num || ""} onChange={(event) => updateStrategyField("max_hold_num", event.target.value ? Number(event.target.value) : null)} /></label>
-            <label>候选排序
-              <select value={strategy.candidate_sort || "none"} onChange={(event) => updateStrategyField("candidate_sort", event.target.value)}>
-                <option value="none">不排序</option>
-                <option value="return_asc">近N日涨幅升序（回撤优先）</option>
-                <option value="return_desc">近N日涨幅降序（强势优先）</option>
-              </select>
-            </label>
-            <label>排序窗口<input type="number" min="2" max="500" value={strategy.sort_window || 20} onChange={(event) => updateStrategyField("sort_window", Number(event.target.value))} /></label>
-          </section>
-          <section>
-            <div>
-              <span>交易策略</span>
-              <b>买入、卖出、仓位与风控</b>
-              <small>决定信号如何执行，以及如何管理风险。</small>
-            </div>
-            <label>买入组间
-              <select value={strategy.buy_group_logic || "any"} onChange={(event) => updateStrategyField("buy_group_logic", event.target.value)}>
-                <option value="any">任一组满足</option>
-                <option value="all">全部组满足</option>
-              </select>
-            </label>
-            <label>卖出组间
-              <select value={strategy.sell_group_logic || "any"} onChange={(event) => updateStrategyField("sell_group_logic", event.target.value)}>
-                <option value="any">任一组满足</option>
-                <option value="all">全部组满足</option>
-              </select>
-            </label>
-            <label>仓位摘要<input value={`总仓 ${Math.round(settings.max_position * 100)}% · 单票 ${Math.round((settings.max_symbol_position || 0.35) * 100)}%`} readOnly /></label>
-          </section>
+        <div className="strategy-module-config single">
+          {activeMode === "selection" ? (
+            <section>
+              <div>
+                <span>选股策略</span>
+                <b>股票池、过滤与候选排序</b>
+                <small>决定候选股票如何进入交易模块。</small>
+              </div>
+              <label>当前股票池<input value={`沪深 A 股 · ${settings.symbols.length} 只`} readOnly /></label>
+              <label>最多持股<input type="number" min="1" max="200" value={strategy.max_hold_num || ""} onChange={(event) => updateStrategyField("max_hold_num", event.target.value ? Number(event.target.value) : null)} /></label>
+              <label>候选排序
+                <select value={strategy.candidate_sort || "none"} onChange={(event) => updateStrategyField("candidate_sort", event.target.value)}>
+                  <option value="none">不排序</option>
+                  <option value="return_asc">近N日涨幅升序（回撤优先）</option>
+                  <option value="return_desc">近N日涨幅降序（强势优先）</option>
+                </select>
+              </label>
+              <label>排序窗口<input type="number" min="2" max="500" value={strategy.sort_window || 20} onChange={(event) => updateStrategyField("sort_window", Number(event.target.value))} /></label>
+            </section>
+          ) : (
+            <section>
+              <div>
+                <span>交易策略</span>
+                <b>买入、卖出、仓位与风控</b>
+                <small>决定信号如何执行，以及如何管理风险。</small>
+              </div>
+              <label>买入组间
+                <select value={strategy.buy_group_logic || "any"} onChange={(event) => updateStrategyField("buy_group_logic", event.target.value)}>
+                  <option value="any">任一组满足</option>
+                  <option value="all">全部组满足</option>
+                </select>
+              </label>
+              <label>卖出组间
+                <select value={strategy.sell_group_logic || "any"} onChange={(event) => updateStrategyField("sell_group_logic", event.target.value)}>
+                  <option value="any">任一组满足</option>
+                  <option value="all">全部组满足</option>
+                </select>
+              </label>
+              <label>仓位摘要<input value={`总仓 ${Math.round(settings.max_position * 100)}% · 单票 ${Math.round((settings.max_symbol_position || 0.35) * 100)}%`} readOnly /></label>
+              <label>最多持股<input value={`${strategy.max_hold_num || "不限"} 只`} readOnly /></label>
+            </section>
+          )}
         </div>
-        <div className="strategy-json-panel">
-          <textarea
-            value={strategyJsonText}
-            onChange={(event) => setStrategyJsonText(event.target.value)}
-            placeholder="也可以把策略 JSON 粘贴到这里，再点击导入。支持纯 strategy 对象，或 { strategy: ... } 包装格式。"
-          />
-          <button className="ghost" disabled={!strategyJsonText.trim()} onClick={() => importStrategy(strategyJsonText)}>从粘贴内容导入</button>
-          <span>{strategyTransferStatus || "导入会替换当前可视化策略；如需持久化，请再点击保存新版本。"}</span>
-        </div>
-        <div className="rule-flow">
+        {showJsonPanel ? (
+          <div className="strategy-json-panel">
+            <textarea
+              value={strategyJsonText}
+              onChange={(event) => setStrategyJsonText(event.target.value)}
+              placeholder="也可以把策略 JSON 粘贴到这里，再点击导入。支持纯 strategy 对象，或 { strategy: ... } 包装格式。"
+            />
+            <button className="ghost" disabled={!strategyJsonText.trim()} onClick={() => importStrategy(strategyJsonText)}>从粘贴内容导入</button>
+            <span>{strategyTransferStatus || "导入会替换当前可视化策略；如需持久化，请再点击保存新版本。"}</span>
+          </div>
+        ) : null}
+        {activeMode === "selection" ? (
+          <div className="selection-editor-panel">
+            <div className="rule-node source"><Database size={21} /><b>股票池</b><span>沪深 A 股 · {settings.symbols.length} 只</span></div>
+            <div className="selection-flow-copy">
+              <b>选股策略只负责“谁有资格进入交易”</b>
+              <span>这里设置候选池规模、排序方式和持股上限；买入、卖出和仓位执行请切到「交易策略」。</span>
+            </div>
+            <div className="rule-node risk"><SlidersHorizontal size={21} /><b>候选输出</b><span>最多 {strategy.max_hold_num || "不限"} 只 · {strategy.sort_window || 20} 日排序窗口</span></div>
+          </div>
+        ) : (
+          <div className="rule-flow">
           <div className="rule-node source"><Database size={21} /><b>股票池</b><span>沪深 A 股 · {settings.symbols.length} 只</span></div>
           <div className="connector" />
           <div className="rule-side">
@@ -646,11 +671,22 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
           <div className="connector" />
           <div className="rule-node risk"><SlidersHorizontal size={21} /><b>仓位管理</b><span>最大仓位 {settings.max_position * 100}% · 最多 {strategy.max_hold_num || "不限"} 只</span></div>
         </div>
+        )}
         <div className="validation-row">
           <span><Check size={17} weight="bold" />规则检查通过</span>
-          <span>信号在收盘后产生</span>
-          <span>下一交易日开盘成交</span>
-          <span>T+1 可卖</span>
+          {activeMode === "selection" ? (
+            <>
+              <span>候选池先过滤再排序</span>
+              <span>输出给交易策略执行</span>
+              <span>股票池来自数据中心</span>
+            </>
+          ) : (
+            <>
+              <span>信号在收盘后产生</span>
+              <span>下一交易日开盘成交</span>
+              <span>T+1 可卖</span>
+            </>
+          )}
         </div>
         <div className="modal-actions">
           <button className="ghost" onClick={close}>取消</button>
