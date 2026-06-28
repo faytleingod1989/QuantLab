@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 
 import { API, initialSettings, navItems } from "./appConfig";
 import {
@@ -71,6 +71,7 @@ function DataCenterPage({
   source,
   openData,
   onSyncAll,
+  onCancelSyncAll,
   syncingAll,
   onSelectDataset,
   onDeleteDataset,
@@ -80,8 +81,12 @@ function DataCenterPage({
     isSyncableShSzSecurity(item) && item.symbol !== settings.benchmark
   )).length;
   const selectedCoverage = allMarketCoverage(selectedDataset, syncableAllMarketCount);
+  const hasIncompleteAllMarketDataset = Boolean(selectedCoverage && !selectedCoverage.isComplete) || datasets.some((dataset) => {
+    const coverage = allMarketCoverage(dataset, syncableAllMarketCount);
+    return coverage && !coverage.isComplete;
+  });
   const snapshotNote = selectedDataset
-    ? selectedCoverage?.isLow
+    ? selectedCoverage && !selectedCoverage.isComplete
       ? `当前快照覆盖不足：${selectedCoverage.syncedCount} / ${selectedCoverage.expectedCount} 标的`
       : `当前：${selectedDataset.name}`
     : "当前使用演示数据";
@@ -94,8 +99,8 @@ function DataCenterPage({
           <p>这里集中展示行情快照、证券主表和质量检查；常用的选择、删除、全 A 同步可以直接在主页面完成。</p>
         </div>
         <div className="view-actions">
-          <button className="ghost" onClick={onSyncAll} disabled={!source?.akshare_available || syncingAll}>
-            {syncingAll ? "全A补齐中…" : selectedCoverage?.isLow ? "继续补齐全A" : "同步沪深全A"}
+          <button className="ghost" onClick={syncingAll ? onCancelSyncAll : onSyncAll} disabled={!syncingAll && !source?.akshare_available}>
+            {syncingAll ? "停止自动补齐" : hasIncompleteAllMarketDataset ? "自动补齐全A" : "同步沪深全A"}
           </button>
           <button className="primary" onClick={openData}>打开数据管理</button>
         </div>
@@ -282,6 +287,7 @@ function allMarketCoverage(dataset, expectedCount) {
     syncedCount,
     ratio: syncedCount / expected,
     isLow: syncedCount < Math.ceil(expected * 0.9),
+    isComplete: syncedCount >= expected,
   };
 }
 
@@ -417,6 +423,7 @@ function App() {
   const [importing, setImporting] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncingAll, setSyncingAll] = useState(false);
+  const allMarketSyncAbortRef = useRef(null);
   const [strategyRecord, setStrategyRecord] = useState(null);
   const [savingStrategy, setSavingStrategy] = useState(false);
   const [strategyEditorMode, setStrategyEditorMode] = useState("trading");
@@ -561,6 +568,11 @@ function App() {
     }
   };
 
+  const cancelAllMarketSync = () => {
+    allMarketSyncAbortRef.current?.abort();
+    setNotice("正在停止自动补齐全A…");
+  };
+
   const syncAkshare = async (scope = "selected") => {
     const allMarket = scope === "all";
     // 选股同步时检查数量上限
@@ -568,6 +580,8 @@ function App() {
       setNotice(`选股同步最多支持 20 只股票，当前选择了 ${settings.symbols.length} 只。请先缩小股票池，或使用「同步沪深全A」。`);
       return;
     }
+    const abortController = allMarket ? new AbortController() : null;
+    if (allMarket) allMarketSyncAbortRef.current = abortController;
     allMarket ? setSyncingAll(true) : setSyncing(true);
     setNotice("");
     try {
@@ -576,42 +590,70 @@ function App() {
         ? datasets.find((item) => item.id === settings.dataset_id && item.source === "akshare_all" && item.name === allMarketName)
           || datasets.find((item) => item.source === "akshare_all" && item.name === allMarketName)
         : null;
-      const response = await fetch(`${API}/datasets/akshare${allMarket ? "/all" : ""}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(
-          allMarket
-            ? {
-                name: allMarketName,
-                start_date: settings.start_date,
-                end_date: settings.end_date,
-                benchmark: settings.benchmark,
-                base_dataset_id: baseAllMarketDataset?.id || null,
-              }
-            : {
-                name: `AkShare ${settings.start_date} 至 ${settings.end_date}`,
-                symbols: settings.symbols,
-                start_date: settings.start_date,
-                end_date: settings.end_date,
-                benchmark: settings.benchmark,
-              }
-        ),
-      });
-      if (!response.ok) throw new Error((await response.json()).detail || "AkShare 同步失败");
-      const dataset = await response.json();
-      setDatasets((current) => {
-        const consolidatedIds = new Set(dataset._consolidated_dataset_ids || []);
-        return [dataset, ...current.filter((item) => item.id !== dataset.id && !consolidatedIds.has(item.id))];
-      });
-      applyDataset(dataset, dataset.summary.symbols);
-      setDatasetQuality({ dataset, summary: dataset.summary, quality_checks: dataset.quality_checks || [] });
-      const coverageText = allMarket && dataset._coverage
-        ? `，A股覆盖 ${dataset._coverage.covered}/${dataset._coverage.expected}`
-        : "";
-      setNotice(dataset.duplicate ? "真实行情快照已存在并已选中" : `真实行情已同步：${dataset.summary.symbol_count} 标的，${dataset.summary.row_count} 行${coverageText}${dataset._sync_note ? `（${dataset._sync_note}）` : ""}`);
+      let latestDataset = null;
+      let batchCount = 0;
+      let shouldContinue = false;
+      do {
+        const response = await fetch(`${API}/datasets/akshare${allMarket ? "/all" : ""}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: abortController?.signal,
+          body: JSON.stringify(
+            allMarket
+              ? {
+                  name: allMarketName,
+                  start_date: settings.start_date,
+                  end_date: settings.end_date,
+                  benchmark: settings.benchmark,
+                  base_dataset_id: latestDataset?.id || baseAllMarketDataset?.id || null,
+                }
+              : {
+                  name: `AkShare ${settings.start_date} 至 ${settings.end_date}`,
+                  symbols: settings.symbols,
+                  start_date: settings.start_date,
+                  end_date: settings.end_date,
+                  benchmark: settings.benchmark,
+                }
+          ),
+        });
+        if (!response.ok) throw new Error((await response.json()).detail || "AkShare 同步失败");
+        const dataset = await response.json();
+        latestDataset = dataset;
+        batchCount += 1;
+        setDatasets((current) => {
+          const consolidatedIds = new Set(dataset._consolidated_dataset_ids || []);
+          return [dataset, ...current.filter((item) => item.id !== dataset.id && !consolidatedIds.has(item.id))];
+        });
+        applyDataset(dataset, dataset.summary.symbols);
+        setDatasetQuality({ dataset, summary: dataset.summary, quality_checks: dataset.quality_checks || [] });
+
+        const coverage = dataset._coverage;
+        const covered = Number(coverage?.covered || 0);
+        const expected = Number(coverage?.expected || 0);
+        shouldContinue = allMarket && expected > 0 && covered < expected;
+        if (allMarket) {
+          setNotice(`自动补齐全A：第 ${batchCount} 批完成，当前覆盖 ${covered}/${expected}；${shouldContinue ? "正在继续下一批…" : "已全部完成"}`);
+          if (shouldContinue) await new Promise((resolve) => setTimeout(resolve, 300));
+        } else {
+          const coverageText = dataset._coverage
+            ? `，A股覆盖 ${dataset._coverage.covered}/${dataset._coverage.expected}`
+            : "";
+          setNotice(dataset.duplicate ? "真实行情快照已存在并已选中" : `真实行情已同步：${dataset.summary.symbol_count} 标的，${dataset.summary.row_count} 行${coverageText}${dataset._sync_note ? `（${dataset._sync_note}）` : ""}`);
+        }
+      } while (shouldContinue);
+
+      if (allMarket && latestDataset) {
+        const coverage = latestDataset._coverage;
+        setNotice(`全A自动补齐完成：覆盖 ${coverage?.covered ?? latestDataset.summary.symbol_count}/${coverage?.expected ?? "全部"}，共执行 ${batchCount} 批。`);
+      }
     } catch (error) {
-      setNotice(`同步失败：${errorMessage(error)}`);
+      if (error instanceof DOMException && error.name === "AbortError") {
+        setNotice("已停止自动补齐全A，当前已完成的批次会保留在数据集中。");
+      } else {
+        setNotice(`同步失败：${errorMessage(error)}`);
+      }
     } finally {
+      if (allMarketSyncAbortRef.current === abortController) allMarketSyncAbortRef.current = null;
       allMarket ? setSyncingAll(false) : setSyncing(false);
     }
   };
@@ -822,6 +864,7 @@ function App() {
           source={source}
           openData={() => setDrawer("data")}
           onSyncAll={() => syncAkshare("all")}
+          onCancelSyncAll={cancelAllMarketSync}
           syncingAll={syncingAll}
           onSelectDataset={selectDataset}
           onDeleteDataset={deleteDataset}
@@ -919,6 +962,7 @@ function App() {
           importing={importing}
           onSync={() => syncAkshare("selected")}
           onSyncAll={() => syncAkshare("all")}
+          onCancelSyncAll={cancelAllMarketSync}
           syncing={syncing}
           syncingAll={syncingAll}
           onSelectDataset={selectDataset}

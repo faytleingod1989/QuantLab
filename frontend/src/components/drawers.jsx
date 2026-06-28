@@ -800,6 +800,7 @@ export function DataDrawer({
   importing,
   onSync,
   onSyncAll,
+  onCancelSyncAll,
   syncing,
   syncingAll,
   onSelectDataset,
@@ -832,10 +833,10 @@ export function DataDrawer({
     [securities, settings.benchmark]
   );
   const allMarketPoolCount = stockPools.find((pool) => pool.id === "all_a")?.symbols.length || 0;
-  const hasPartialAllMarketDataset = datasets.some((dataset) => (
+  const hasIncompleteAllMarketDataset = datasets.some((dataset) => (
     dataset.source === "akshare_all" &&
     allMarketPoolCount &&
-    Math.max(0, Number(dataset.symbol_count || 0) - 1) < Math.ceil(allMarketPoolCount * 0.9)
+    Math.max(0, Number(dataset.symbol_count || 0) - 1) < allMarketPoolCount
   ));
   const activePoolId = useMemo(() => {
     const selected = new Set(settings.symbols);
@@ -871,7 +872,7 @@ export function DataDrawer({
           </div>
           <div className="data-actions">
             <button className="ghost" onClick={onSync} disabled={!source?.akshare_available || syncing || syncingAll}>{syncing ? "同步中…" : "同步所选"}</button>
-            <button className="ghost" onClick={onSyncAll} disabled={!source?.akshare_available || syncing || syncingAll}>{syncingAll ? "全A补齐中…" : hasPartialAllMarketDataset ? "继续补齐全A" : "同步沪深全A"}</button>
+            <button className="ghost" onClick={syncingAll ? onCancelSyncAll : onSyncAll} disabled={syncing || (!syncingAll && !source?.akshare_available)}>{syncingAll ? "停止自动补齐" : hasIncompleteAllMarketDataset ? "自动补齐全A" : "同步沪深全A"}</button>
             <label className="csv-upload">
               <input type="file" accept=".csv,text/csv" onChange={onImport} disabled={importing} />
               {importing ? "正在校验…" : "导入 CSV"}
