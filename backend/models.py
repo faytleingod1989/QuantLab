@@ -211,6 +211,7 @@ class AkshareAllDatasetRequest(BaseModel):
     benchmark: str = "000300.SH"
     base_dataset_id: str | None = None
     symbols: list[str] | None = None
+    skip_symbols: list[str] | None = None
 
     @model_validator(mode="after")
     def validate_dates(self):
@@ -225,6 +226,12 @@ class AkshareAllDatasetRequest(BaseModel):
             self.symbols = [str(symbol).strip().upper() for symbol in self.symbols if str(symbol).strip()]
             if not self.symbols:
                 raise ValueError("重试股票列表不能为空")
+        if self.skip_symbols is not None:
+            self.skip_symbols = [
+                str(symbol).strip().upper()
+                for symbol in self.skip_symbols
+                if str(symbol).strip()
+            ]
         return self
 
 

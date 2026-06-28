@@ -96,6 +96,7 @@ function DataCenterPage({
   const taskExpected = Number(allMarketSyncTask?.expected || allMarketSyncTask?.coverage?.expected || 0);
   const taskProgress = taskExpected ? Math.round((taskCovered / taskExpected) * 100) : 0;
   const failedSymbols = allMarketSyncTask?.failed_symbols || allMarketSyncTask?.last_failed_symbols || [];
+  const skippedSymbols = allMarketSyncTask?.skipped_symbols || [];
   return (
     <section className="view-page">
       <div className="view-hero">
@@ -122,6 +123,11 @@ function DataCenterPage({
             <div className="sync-failed-row">
               <span>失败 {failedSymbols.length} 只：{failedSymbols.slice(0, 8).join("、")}{failedSymbols.length > 8 ? "…" : ""}</span>
               {!syncingAll ? <button className="ghost" onClick={onRetryFailedAll}>重试失败项</button> : null}
+            </div>
+          ) : null}
+          {skippedSymbols.length ? (
+            <div className="sync-failed-row muted">
+              <span>已跳过 {skippedSymbols.length} 只长期失败标的：{skippedSymbols.slice(0, 8).join("、")}{skippedSymbols.length > 8 ? "…" : ""}</span>
             </div>
           ) : null}
         </div>

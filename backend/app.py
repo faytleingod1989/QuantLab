@@ -98,9 +98,10 @@ dataset_sync_manager = DatasetSyncTaskManager(
     lambda payload: _sync_all_market_batch(payload),
     max_workers=1,
     max_consecutive_failures=int(os.getenv("QUANTLAB_DATA_SYNC_MAX_FAILURES", "3")),
+    max_symbol_failures=int(os.getenv("QUANTLAB_DATA_SYNC_SYMBOL_FAILURES", "3")),
     batch_interval_seconds=float(os.getenv("QUANTLAB_DATA_SYNC_BATCH_INTERVAL", "0.3")),
     retry_interval_seconds=float(os.getenv("QUANTLAB_DATA_SYNC_RETRY_INTERVAL", "2.0")),
-    state_path=database_path.parent / "dataset_sync_tasks.json",
+    repository=repository,
 )
 
 
@@ -788,6 +789,11 @@ def _sync_all_market_batch(payload: AkshareAllDatasetRequest) -> dict:
             raise ValueError("重试股票列表中没有可同步的沪深 A 股标的")
     else:
         symbols = active_symbols
+    skipped_symbols = {normalize_symbol(symbol) for symbol in (payload.skip_symbols or [])}
+    if skipped_symbols:
+        symbols = [symbol for symbol in symbols if normalize_symbol(symbol) not in skipped_symbols]
+        if not symbols:
+            raise ValueError("剩余股票均已达到失败阈值，已跳过")
     existing_records = _all_market_base_datasets(payload.name, payload.base_dataset_id)
     existing_record = existing_records[0] if existing_records else None
     duplicate_records = existing_records[1:]
@@ -832,6 +838,7 @@ def _sync_all_market_batch(payload: AkshareAllDatasetRequest) -> dict:
         result["_batch_symbols"] = []
         result["_batch_covered_symbols"] = []
         result["_failed_symbols"] = []
+        result["_skipped_symbols"] = sorted(skipped_symbols)
         if duplicate_records:
             result["_consolidated_dataset_ids"] = [record["id"] for record in duplicate_records]
         result["_sync_note"] = (
@@ -880,6 +887,7 @@ def _sync_all_market_batch(payload: AkshareAllDatasetRequest) -> dict:
     result["_batch_symbols"] = batch_symbols
     result["_batch_covered_symbols"] = batch_covered_symbols
     result["_failed_symbols"] = failed_symbols
+    result["_skipped_symbols"] = sorted(skipped_symbols)
     added_count = coverage["covered"] - previous_count
     if coverage["covered"] < len(symbols):
         result["_sync_note"] = (

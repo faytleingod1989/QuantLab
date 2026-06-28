@@ -126,12 +126,16 @@ class DatasetSyncTaskManager:
         batch_interval_seconds: float = 0.3,
         retry_interval_seconds: float = 2.0,
         state_path: str | Path | None = None,
+        repository: BacktestRepository | None = None,
+        max_symbol_failures: int = 3,
     ):
         self.execute_batch = execute_batch
         self.max_consecutive_failures = max(1, max_consecutive_failures)
+        self.max_symbol_failures = max(1, max_symbol_failures)
         self.batch_interval_seconds = max(0.0, batch_interval_seconds)
         self.retry_interval_seconds = max(0.0, retry_interval_seconds)
         self.state_path = Path(state_path) if state_path else None
+        self.repository = repository
         self.executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="quantlab-data")
         self._cancel_events: dict[str, Event] = {}
         self._futures: dict[str, Future] = {}
@@ -162,6 +166,8 @@ class DatasetSyncTaskManager:
                 "failed_symbols": [],
                 "last_failed_symbols": [],
                 "failure_history": [],
+                "symbol_failures": {},
+                "skipped_symbols": [],
                 "sync_note": "",
                 "error": None,
                 "cancel_requested": False,
@@ -212,8 +218,30 @@ class DatasetSyncTaskManager:
 
         try:
             while not cancel_event.is_set():
+                task_snapshot = self.get(task_id) or {}
+                skipped_symbols = sorted(task_snapshot.get("skipped_symbols") or [])
+                request_symbols = list(getattr(request, "symbols", None) or [])
+                if skipped_symbols and request_symbols:
+                    allowed_symbols = [
+                        symbol for symbol in request_symbols
+                        if str(symbol).upper() not in set(skipped_symbols)
+                    ]
+                    if not allowed_symbols:
+                        self._update(
+                            task_id,
+                            status="completed",
+                            finished_at=utc_now(),
+                            sync_note=f"剩余 {len(skipped_symbols)} 只标的已达到失败阈值，已跳过。",
+                        )
+                        logger.info("dataset_sync_completed_with_skips task_id=%s", task_id)
+                        return
+                    request = (
+                        request.model_copy(update={"symbols": allowed_symbols})
+                        if hasattr(request, "model_copy")
+                        else request
+                    )
                 current_request = (
-                    request.model_copy(update={"base_dataset_id": base_dataset_id})
+                    request.model_copy(update={"base_dataset_id": base_dataset_id, "skip_symbols": skipped_symbols})
                     if hasattr(request, "model_copy")
                     else request
                 )
@@ -262,7 +290,17 @@ class DatasetSyncTaskManager:
                 prior_failed = set(previous_task.get("failed_symbols") or [])
                 batch_failed = set(result.get("_failed_symbols") or [])
                 batch_covered = set(result.get("_batch_covered_symbols") or [])
-                failed_symbols = sorted((prior_failed | batch_failed) - batch_covered)
+                symbol_failures = dict(previous_task.get("symbol_failures") or {})
+                for symbol in batch_covered:
+                    symbol_failures.pop(symbol, None)
+                for symbol in batch_failed:
+                    symbol_failures[symbol] = int(symbol_failures.get(symbol) or 0) + 1
+                skipped_symbols = sorted(set(previous_task.get("skipped_symbols") or []) | {
+                    symbol
+                    for symbol, count in symbol_failures.items()
+                    if int(count) >= self.max_symbol_failures
+                } | set(result.get("_skipped_symbols") or []))
+                failed_symbols = sorted(((prior_failed | batch_failed) - batch_covered) - set(skipped_symbols))
                 history = list(previous_task.get("failure_history") or [])
                 if batch_failed:
                     history.append(
@@ -288,6 +326,8 @@ class DatasetSyncTaskManager:
                     failed_symbols=failed_symbols,
                     last_failed_symbols=sorted(batch_failed),
                     failure_history=history[-50:],
+                    symbol_failures=symbol_failures,
+                    skipped_symbols=skipped_symbols,
                     sync_note=result.get("_sync_note") or "",
                     error=None,
                 )
@@ -329,12 +369,31 @@ class DatasetSyncTaskManager:
         return {}
 
     def _load_state(self) -> None:
+        now = utc_now()
+        if self.repository:
+            try:
+                tasks = self.repository.list_dataset_sync_tasks(limit=50)
+                for task in tasks:
+                    if task.get("status") in {"queued", "running"}:
+                        task["status"] = "interrupted"
+                        task["finished_at"] = task.get("finished_at") or now
+                        task["sync_note"] = "服务重启后任务已中断，可重新启动自动补齐。"
+                        self.repository.upsert_dataset_sync_task(task)
+                self._tasks = {
+                    str(task["id"]): task
+                    for task in tasks
+                    if task and task.get("id")
+                }
+                latest = self.repository.latest_dataset_sync_task()
+                self._latest_task_id = str(latest["id"]) if latest and latest.get("id") else None
+                return
+            except Exception as error:
+                logger.warning("dataset_sync_sqlite_state_load_failed error=%s", error)
         if not self.state_path or not self.state_path.exists():
             return
         try:
             payload = json.loads(self.state_path.read_text(encoding="utf-8"))
             tasks = payload.get("tasks") or {}
-            now = utc_now()
             for task in tasks.values():
                 if task.get("status") in {"queued", "running"}:
                     task["status"] = "interrupted"
@@ -346,6 +405,13 @@ class DatasetSyncTaskManager:
             logger.warning("dataset_sync_state_load_failed path=%s error=%s", self.state_path, error)
 
     def _persist_state_locked(self) -> None:
+        if self.repository:
+            try:
+                for task in self._tasks.values():
+                    self.repository.upsert_dataset_sync_task(task)
+                return
+            except Exception as error:
+                logger.warning("dataset_sync_sqlite_state_save_failed error=%s", error)
         if not self.state_path:
             return
         try:

@@ -3,21 +3,33 @@ from __future__ import annotations
 from time import sleep
 
 from backend.tasks import DatasetSyncTaskManager
+from backend.repository import BacktestRepository
 
 
 class SyncRequest:
-    def __init__(self, base_dataset_id: str | None = None, symbols: list[str] | None = None):
+    def __init__(
+        self,
+        base_dataset_id: str | None = None,
+        symbols: list[str] | None = None,
+        skip_symbols: list[str] | None = None,
+    ):
         self.base_dataset_id = base_dataset_id
         self.symbols = symbols
+        self.skip_symbols = skip_symbols
 
     def model_copy(self, update: dict):
         return SyncRequest(
             base_dataset_id=update.get("base_dataset_id", self.base_dataset_id),
             symbols=update.get("symbols", self.symbols),
+            skip_symbols=update.get("skip_symbols", self.skip_symbols),
         )
 
     def model_dump(self, mode: str = "json"):
-        return {"base_dataset_id": self.base_dataset_id, "symbols": self.symbols}
+        return {
+            "base_dataset_id": self.base_dataset_id,
+            "symbols": self.symbols,
+            "skip_symbols": self.skip_symbols,
+        }
 
 
 def wait_until_finished(manager: DatasetSyncTaskManager, task_id: str) -> dict:
@@ -127,3 +139,77 @@ def test_dataset_sync_task_tracks_failed_symbols_and_persists_state(tmp_path):
 
     assert latest["id"] == task["id"]
     assert latest["failed_symbols"] == ["000001.SZ"]
+
+
+def test_dataset_sync_task_persists_state_to_repository(tmp_path):
+    repository = BacktestRepository(tmp_path / "quantlab.db")
+
+    def execute_batch(_: SyncRequest) -> dict:
+        return {
+            "id": "dataset-1",
+            "symbol_count": 2,
+            "_coverage": {"covered": 1, "expected": 1},
+            "_providers": [],
+            "_batch_covered_symbols": ["600519.SH"],
+            "_failed_symbols": [],
+            "_sync_note": "ok",
+        }
+
+    manager = DatasetSyncTaskManager(
+        execute_batch,
+        repository=repository,
+        max_workers=1,
+        batch_interval_seconds=0,
+        retry_interval_seconds=0,
+    )
+    try:
+        task = manager.submit(SyncRequest())
+        finished = wait_until_finished(manager, task["id"])
+    finally:
+        manager.shutdown()
+
+    restored = DatasetSyncTaskManager(execute_batch, repository=repository)
+    try:
+        latest = restored.latest()
+    finally:
+        restored.shutdown()
+
+    assert repository.get_dataset_sync_task(task["id"])["status"] == "completed"
+    assert latest["id"] == finished["id"]
+    assert latest["dataset"]["id"] == "dataset-1"
+
+
+def test_dataset_sync_task_skips_symbol_after_failure_threshold():
+    calls = 0
+
+    def execute_batch(request: SyncRequest) -> dict:
+        nonlocal calls
+        calls += 1
+        assert "000001.SZ" not in (request.skip_symbols or [])
+        return {
+            "id": f"dataset-{calls}",
+            "symbol_count": 1,
+            "_coverage": {"covered": 0, "expected": 1},
+            "_providers": [],
+            "_batch_covered_symbols": [],
+            "_failed_symbols": ["000001.SZ"],
+            "_sync_note": "failed one symbol",
+        }
+
+    manager = DatasetSyncTaskManager(
+        execute_batch,
+        max_workers=1,
+        max_symbol_failures=1,
+        batch_interval_seconds=0,
+        retry_interval_seconds=0,
+    )
+    try:
+        task = manager.submit(SyncRequest(symbols=["000001.SZ"]))
+        finished = wait_until_finished(manager, task["id"])
+    finally:
+        manager.shutdown()
+
+    assert calls == 1
+    assert finished["status"] == "completed"
+    assert finished["skipped_symbols"] == ["000001.SZ"]
+    assert finished["failed_symbols"] == []

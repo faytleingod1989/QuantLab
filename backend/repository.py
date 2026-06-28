@@ -246,6 +246,24 @@ class BacktestRepository:
                 ON market_daily_bars(symbol, trade_date)
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS dataset_sync_tasks (
+                    id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL,
+                    task_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    finished_at TEXT
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_dataset_sync_tasks_created
+                ON dataset_sync_tasks(created_at DESC)
+                """
+            )
 
     @staticmethod
     def _ensure_column(connection: sqlite3.Connection, table: str, column: str, kind: str) -> None:
@@ -844,6 +862,62 @@ class BacktestRepository:
             if security["delisted_date"] and start_date > security["delisted_date"]:
                 errors.append(f"{symbol} 在回测区间开始前已退市，退市日为 {security['delisted_date']}")
         return errors
+
+    def upsert_dataset_sync_task(self, task: dict[str, Any]) -> None:
+        now = utc_now()
+        task_id = str(task["id"])
+        created_at = task.get("created_at") or now
+        with self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO dataset_sync_tasks(id, status, task_json, created_at, updated_at, finished_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                    status = excluded.status,
+                    task_json = excluded.task_json,
+                    updated_at = excluded.updated_at,
+                    finished_at = excluded.finished_at
+                """,
+                (
+                    task_id,
+                    str(task.get("status") or "unknown"),
+                    json.dumps(task, ensure_ascii=False),
+                    created_at,
+                    now,
+                    task.get("finished_at"),
+                ),
+            )
+
+    def get_dataset_sync_task(self, task_id: str) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT task_json FROM dataset_sync_tasks WHERE id = ?",
+                (task_id,),
+            ).fetchone()
+        return self._safe_json(row["task_json"], {}) if row else None
+
+    def latest_dataset_sync_task(self) -> dict[str, Any] | None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT task_json FROM dataset_sync_tasks
+                ORDER BY created_at DESC, updated_at DESC
+                LIMIT 1
+                """
+            ).fetchone()
+        return self._safe_json(row["task_json"], {}) if row else None
+
+    def list_dataset_sync_tasks(self, limit: int = 50) -> list[dict[str, Any]]:
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT task_json FROM dataset_sync_tasks
+                ORDER BY created_at DESC, updated_at DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        return [self._safe_json(row["task_json"], {}) for row in rows]
 
     @staticmethod
     def _decode(row: sqlite3.Row, *, include_result: bool) -> dict[str, Any]:
