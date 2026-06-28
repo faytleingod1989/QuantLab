@@ -20,6 +20,9 @@ class ProviderFetchStat:
     fetched_symbols: int
     failed_symbols: int
     message: str = ""
+    requested_symbol_list: tuple[str, ...] = ()
+    fetched_symbol_list: tuple[str, ...] = ()
+    failed_symbol_list: tuple[str, ...] = ()
 
     def as_dict(self) -> dict:
         return {
@@ -28,6 +31,9 @@ class ProviderFetchStat:
             "fetched_symbols": self.fetched_symbols,
             "failed_symbols": self.failed_symbols,
             "message": self.message,
+            "requested_symbol_list": list(self.requested_symbol_list),
+            "fetched_symbol_list": list(self.fetched_symbol_list),
+            "failed_symbol_list": list(self.failed_symbol_list),
         }
 
 
@@ -69,7 +75,8 @@ def fetch_free_daily_dataset(
         if not remaining:
             break
         fetcher = _provider_fetcher(provider_name)
-        requested_count = len(remaining)
+        requested_before = tuple(remaining)
+        requested_count = len(requested_before)
         try:
             frame = fetcher(remaining, start_date, end_date)
             frame = prepare_market_frame(frame)
@@ -78,13 +85,17 @@ def fetch_free_daily_dataset(
             if newly_fetched:
                 frames.append(frame)
             remaining = [symbol for symbol in remaining if symbol not in newly_fetched]
+            failed_after = tuple(symbol for symbol in requested_before if symbol not in newly_fetched)
             stats.append(
                 ProviderFetchStat(
                     provider=provider_name,
                     requested_symbols=requested_count,
                     fetched_symbols=len(newly_fetched),
-                    failed_symbols=len(remaining),
+                    failed_symbols=len(failed_after),
                     message="ok" if newly_fetched else "未返回可覆盖的新标的",
+                    requested_symbol_list=requested_before,
+                    fetched_symbol_list=tuple(sorted(newly_fetched)),
+                    failed_symbol_list=failed_after,
                 )
             )
         except Exception as error:
@@ -96,6 +107,8 @@ def fetch_free_daily_dataset(
                     fetched_symbols=0,
                     failed_symbols=requested_count,
                     message=str(error),
+                    requested_symbol_list=requested_before,
+                    failed_symbol_list=requested_before,
                 )
             )
 

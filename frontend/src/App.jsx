@@ -72,6 +72,7 @@ function DataCenterPage({
   openData,
   onSyncAll,
   onCancelSyncAll,
+  onRetryFailedAll,
   syncingAll,
   allMarketSyncTask,
   onSelectDataset,
@@ -94,6 +95,7 @@ function DataCenterPage({
   const taskCovered = Number(allMarketSyncTask?.covered || allMarketSyncTask?.coverage?.covered || 0);
   const taskExpected = Number(allMarketSyncTask?.expected || allMarketSyncTask?.coverage?.expected || 0);
   const taskProgress = taskExpected ? Math.round((taskCovered / taskExpected) * 100) : 0;
+  const failedSymbols = allMarketSyncTask?.failed_symbols || allMarketSyncTask?.last_failed_symbols || [];
   return (
     <section className="view-page">
       <div className="view-hero">
@@ -116,6 +118,12 @@ function DataCenterPage({
             <span>第 {allMarketSyncTask.batch_count || 0} 批 · 覆盖 {taskCovered}/{taskExpected || "?"} · {taskProgress}%</span>
           </div>
           <progress value={taskCovered} max={taskExpected || 1} />
+          {failedSymbols.length ? (
+            <div className="sync-failed-row">
+              <span>失败 {failedSymbols.length} 只：{failedSymbols.slice(0, 8).join("、")}{failedSymbols.length > 8 ? "…" : ""}</span>
+              {!syncingAll ? <button className="ghost" onClick={onRetryFailedAll}>重试失败项</button> : null}
+            </div>
+          ) : null}
         </div>
       ) : null}
       <div className="page-card-grid">
@@ -656,6 +664,32 @@ function App() {
     }
   };
 
+  const retryFailedAllMarketSync = async () => {
+    if (!allMarketSyncTask?.id) {
+      setNotice("当前没有可重试的全A补齐任务。");
+      return;
+    }
+    const failedSymbols = allMarketSyncTask.failed_symbols || allMarketSyncTask.last_failed_symbols || [];
+    if (!failedSymbols.length) {
+      setNotice("当前任务没有失败股票需要重试。");
+      return;
+    }
+    setSyncingAll(true);
+    setNotice(`正在重试 ${failedSymbols.length} 只失败股票…`);
+    try {
+      const response = await fetch(`${API}/datasets/akshare/all/tasks/${allMarketSyncTask.id}/retry-failed`, {
+        method: "POST",
+      });
+      if (!response.ok) throw new Error((await response.json()).detail || "重试失败项启动失败");
+      const task = await response.json();
+      applyAllMarketSyncTask(task);
+      setNotice(task.duplicate ? "已有同步任务正在运行，已切换到当前进度。" : `失败项重试任务已启动：${failedSymbols.length} 只。`);
+    } catch (error) {
+      setSyncingAll(false);
+      setNotice(`重试失败：${errorMessage(error)}`);
+    }
+  };
+
   const syncAkshare = async (scope = "selected") => {
     const allMarket = scope === "all";
     if (allMarket) {
@@ -977,6 +1011,7 @@ function App() {
           openData={() => setDrawer("data")}
           onSyncAll={() => syncAkshare("all")}
           onCancelSyncAll={cancelAllMarketSync}
+          onRetryFailedAll={retryFailedAllMarketSync}
           syncingAll={syncingAll}
           allMarketSyncTask={allMarketSyncTask}
           onSelectDataset={selectDataset}
@@ -1076,6 +1111,7 @@ function App() {
           onSync={() => syncAkshare("selected")}
           onSyncAll={() => syncAkshare("all")}
           onCancelSyncAll={cancelAllMarketSync}
+          onRetryFailedAll={retryFailedAllMarketSync}
           syncing={syncing}
           syncingAll={syncingAll}
           allMarketSyncTask={allMarketSyncTask}

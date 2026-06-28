@@ -210,6 +210,7 @@ class AkshareAllDatasetRequest(BaseModel):
     end_date: str
     benchmark: str = "000300.SH"
     base_dataset_id: str | None = None
+    symbols: list[str] | None = None
 
     @model_validator(mode="after")
     def validate_dates(self):
@@ -220,6 +221,10 @@ class AkshareAllDatasetRequest(BaseModel):
             raise ValueError("日期格式必须为 YYYY-MM-DD") from error
         if start >= end:
             raise ValueError("结束日期必须晚于开始日期")
+        if self.symbols is not None:
+            self.symbols = [str(symbol).strip().upper() for symbol in self.symbols if str(symbol).strip()]
+            if not self.symbols:
+                raise ValueError("重试股票列表不能为空")
         return self
 
 

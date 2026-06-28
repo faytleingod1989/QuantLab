@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import json
 import logging
 from concurrent.futures import Future, ThreadPoolExecutor
+from pathlib import Path
 from threading import Event, Lock
 from time import sleep
 from typing import Any, Callable
@@ -123,17 +125,20 @@ class DatasetSyncTaskManager:
         max_consecutive_failures: int = 3,
         batch_interval_seconds: float = 0.3,
         retry_interval_seconds: float = 2.0,
+        state_path: str | Path | None = None,
     ):
         self.execute_batch = execute_batch
         self.max_consecutive_failures = max(1, max_consecutive_failures)
         self.batch_interval_seconds = max(0.0, batch_interval_seconds)
         self.retry_interval_seconds = max(0.0, retry_interval_seconds)
+        self.state_path = Path(state_path) if state_path else None
         self.executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="quantlab-data")
         self._cancel_events: dict[str, Event] = {}
         self._futures: dict[str, Future] = {}
         self._tasks: dict[str, dict] = {}
         self._latest_task_id: str | None = None
         self._lock = Lock()
+        self._load_state()
 
     def submit(self, request: Any) -> dict:
         with self._lock:
@@ -154,9 +159,13 @@ class DatasetSyncTaskManager:
                 "dataset": None,
                 "coverage": None,
                 "providers": [],
+                "failed_symbols": [],
+                "last_failed_symbols": [],
+                "failure_history": [],
                 "sync_note": "",
                 "error": None,
                 "cancel_requested": False,
+                "request": self._request_payload(request),
                 "duplicate": False,
                 "created_at": now,
                 "started_at": None,
@@ -167,6 +176,7 @@ class DatasetSyncTaskManager:
             self._latest_task_id = task_id
             self._cancel_events[task_id] = cancel_event
             self._futures[task_id] = self.executor.submit(self._execute, task_id, request, cancel_event)
+            self._persist_state_locked()
             return record.copy()
 
     def latest(self) -> dict | None:
@@ -187,6 +197,7 @@ class DatasetSyncTaskManager:
             task_exists = task_id in self._tasks
             if task_exists:
                 self._tasks[task_id]["cancel_requested"] = True
+                self._persist_state_locked()
         if event:
             event.set()
         if future and future.cancel():
@@ -213,10 +224,23 @@ class DatasetSyncTaskManager:
                     consecutive_failures = 0
                 except Exception as error:
                     consecutive_failures += 1
+                    previous = self.get(task_id) or {}
+                    history = list(previous.get("failure_history") or [])
+                    retry_symbols = list((self._request_payload(current_request) or {}).get("symbols") or [])
+                    history.append(
+                        {
+                            "at": utc_now(),
+                            "batch": int(previous.get("batch_count") or 0) + 1,
+                            "error": str(error),
+                            "symbols": retry_symbols[:200],
+                        }
+                    )
                     self._update(
                         task_id,
                         status="running",
                         error=str(error),
+                        last_failed_symbols=retry_symbols[:200],
+                        failure_history=history[-50:],
                         sync_note=f"同步失败 {consecutive_failures}/{self.max_consecutive_failures}：{error}",
                     )
                     if consecutive_failures >= self.max_consecutive_failures:
@@ -234,6 +258,22 @@ class DatasetSyncTaskManager:
                 batch_count = int((self.get(task_id) or {}).get("batch_count") or 0) + 1
                 added_symbols = max(0, covered - previous_covered)
                 base_dataset_id = result.get("id") or base_dataset_id
+                previous_task = self.get(task_id) or {}
+                prior_failed = set(previous_task.get("failed_symbols") or [])
+                batch_failed = set(result.get("_failed_symbols") or [])
+                batch_covered = set(result.get("_batch_covered_symbols") or [])
+                failed_symbols = sorted((prior_failed | batch_failed) - batch_covered)
+                history = list(previous_task.get("failure_history") or [])
+                if batch_failed:
+                    history.append(
+                        {
+                            "at": utc_now(),
+                            "batch": batch_count,
+                            "error": result.get("_sync_note") or "partial symbol fetch failure",
+                            "symbols": sorted(batch_failed)[:200],
+                            "providers": result.get("_providers") or [],
+                        }
+                    )
 
                 self._update(
                     task_id,
@@ -245,6 +285,9 @@ class DatasetSyncTaskManager:
                     dataset=result,
                     coverage=coverage,
                     providers=result.get("_providers") or [],
+                    failed_symbols=failed_symbols,
+                    last_failed_symbols=sorted(batch_failed),
+                    failure_history=history[-50:],
                     sync_note=result.get("_sync_note") or "",
                     error=None,
                 )
@@ -273,6 +316,41 @@ class DatasetSyncTaskManager:
         with self._lock:
             if task_id in self._tasks:
                 self._tasks[task_id].update(updates)
+                self._persist_state_locked()
 
     def shutdown(self) -> None:
         self.executor.shutdown(wait=False, cancel_futures=True)
+
+    def _request_payload(self, request: Any) -> dict:
+        if hasattr(request, "model_dump"):
+            return request.model_dump(mode="json")
+        if hasattr(request, "__dict__"):
+            return dict(request.__dict__)
+        return {}
+
+    def _load_state(self) -> None:
+        if not self.state_path or not self.state_path.exists():
+            return
+        try:
+            payload = json.loads(self.state_path.read_text(encoding="utf-8"))
+            tasks = payload.get("tasks") or {}
+            now = utc_now()
+            for task in tasks.values():
+                if task.get("status") in {"queued", "running"}:
+                    task["status"] = "interrupted"
+                    task["finished_at"] = task.get("finished_at") or now
+                    task["sync_note"] = "服务重启后任务已中断，可重新启动自动补齐。"
+            self._tasks = {str(task_id): task for task_id, task in tasks.items()}
+            self._latest_task_id = payload.get("latest_task_id")
+        except Exception as error:
+            logger.warning("dataset_sync_state_load_failed path=%s error=%s", self.state_path, error)
+
+    def _persist_state_locked(self) -> None:
+        if not self.state_path:
+            return
+        try:
+            self.state_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {"latest_task_id": self._latest_task_id, "tasks": self._tasks}
+            self.state_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception as error:
+            logger.warning("dataset_sync_state_save_failed path=%s error=%s", self.state_path, error)

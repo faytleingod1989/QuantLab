@@ -801,6 +801,7 @@ export function DataDrawer({
   onSync,
   onSyncAll,
   onCancelSyncAll,
+  onRetryFailedAll,
   syncing,
   syncingAll,
   allMarketSyncTask,
@@ -855,6 +856,7 @@ export function DataDrawer({
   const selectPool = (pool) => applySymbols(pool.symbols);
   const selectFiltered = () => applySymbols(filteredSymbols);
   const clearSelection = () => applySymbols([]);
+  const failedSymbols = allMarketSyncTask?.failed_symbols || allMarketSyncTask?.last_failed_symbols || [];
   const toggle = (symbol) =>
     setSettings((current) => ({
       ...current,
@@ -898,6 +900,12 @@ export function DataDrawer({
               value={Number(allMarketSyncTask.covered || 0)}
               max={Number(allMarketSyncTask.expected || allMarketSyncTask.coverage?.expected || 1)}
             />
+            {failedSymbols.length ? (
+              <div className="sync-failed-row">
+                <span>失败 {failedSymbols.length} 只：{failedSymbols.slice(0, 8).join("、")}{failedSymbols.length > 8 ? "…" : ""}</span>
+                {!syncingAll ? <button className="ghost" onClick={onRetryFailedAll}>重试失败项</button> : null}
+              </div>
+            ) : null}
           </div>
         ) : null}
         <div className="dataset-picker">

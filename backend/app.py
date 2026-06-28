@@ -100,6 +100,7 @@ dataset_sync_manager = DatasetSyncTaskManager(
     max_consecutive_failures=int(os.getenv("QUANTLAB_DATA_SYNC_MAX_FAILURES", "3")),
     batch_interval_seconds=float(os.getenv("QUANTLAB_DATA_SYNC_BATCH_INTERVAL", "0.3")),
     retry_interval_seconds=float(os.getenv("QUANTLAB_DATA_SYNC_RETRY_INTERVAL", "2.0")),
+    state_path=database_path.parent / "dataset_sync_tasks.json",
 )
 
 
@@ -773,9 +774,20 @@ async def sync_akshare_dataset(payload: AkshareDatasetRequest) -> dict:
 
 
 def _sync_all_market_batch(payload: AkshareAllDatasetRequest) -> dict:
-    symbols = _active_sh_sz_symbols()
-    if not symbols:
+    active_symbols = _active_sh_sz_symbols()
+    if not active_symbols:
         raise ValueError("没有可同步的沪深 A 股证券主数据")
+    if payload.symbols:
+        active_set = {normalize_symbol(symbol) for symbol in active_symbols}
+        symbols = [
+            normalize_symbol(symbol)
+            for symbol in payload.symbols
+            if normalize_symbol(symbol) in active_set
+        ]
+        if not symbols:
+            raise ValueError("重试股票列表中没有可同步的沪深 A 股标的")
+    else:
+        symbols = active_symbols
     existing_records = _all_market_base_datasets(payload.name, payload.base_dataset_id)
     existing_record = existing_records[0] if existing_records else None
     duplicate_records = existing_records[1:]
@@ -817,6 +829,9 @@ def _sync_all_market_batch(payload: AkshareAllDatasetRequest) -> dict:
             "reused": bool(warehouse_coverage["covered"]),
         }
         result["_providers"] = []
+        result["_batch_symbols"] = []
+        result["_batch_covered_symbols"] = []
+        result["_failed_symbols"] = []
         if duplicate_records:
             result["_consolidated_dataset_ids"] = [record["id"] for record in duplicate_records]
         result["_sync_note"] = (
@@ -830,6 +845,15 @@ def _sync_all_market_batch(payload: AkshareAllDatasetRequest) -> dict:
     frame, provider_stats = fetch_free_daily_dataset(
         batch_symbols, payload.start_date, payload.end_date, payload.benchmark
     )
+    fetched_symbol_set = set(frame["symbol"].astype(str).map(normalize_symbol).unique())
+    batch_covered_symbols = [
+        symbol for symbol in batch_symbols
+        if normalize_symbol(symbol) in fetched_symbol_set
+    ]
+    failed_symbols = [
+        symbol for symbol in batch_symbols
+        if normalize_symbol(symbol) not in fetched_symbol_set
+    ]
     merged_frame = _merge_market_frames(existing_frame, frame)
     coverage = _all_market_coverage(merged_frame, symbols, payload.benchmark)
     previous_count = len(covered)
@@ -853,6 +877,9 @@ def _sync_all_market_batch(payload: AkshareAllDatasetRequest) -> dict:
         "reused": bool(warehouse_coverage["covered"]),
     }
     result["_providers"] = provider_stats
+    result["_batch_symbols"] = batch_symbols
+    result["_batch_covered_symbols"] = batch_covered_symbols
+    result["_failed_symbols"] = failed_symbols
     added_count = coverage["covered"] - previous_count
     if coverage["covered"] < len(symbols):
         result["_sync_note"] = (
@@ -866,6 +893,7 @@ def _sync_all_market_batch(payload: AkshareAllDatasetRequest) -> dict:
 @app.post("/api/datasets/akshare/all", status_code=201)
 async def sync_all_akshare_dataset(payload: AkshareAllDatasetRequest) -> dict:
     try:
+        return await run_in_threadpool(_sync_all_market_batch, payload)
         symbols = await run_in_threadpool(_active_sh_sz_symbols)
         if not symbols:
             raise ValueError("没有可同步的沪深 A 股证券主数据")
@@ -958,6 +986,22 @@ async def sync_all_akshare_dataset(payload: AkshareAllDatasetRequest) -> dict:
 @app.post("/api/datasets/akshare/all/tasks", status_code=202)
 def start_all_market_sync_task(payload: AkshareAllDatasetRequest) -> dict:
     return dataset_sync_manager.submit(payload)
+
+
+@app.post("/api/datasets/akshare/all/tasks/{task_id}/retry-failed", status_code=202)
+def retry_failed_all_market_sync_task(task_id: str) -> dict:
+    task = dataset_sync_manager.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="同步任务不存在")
+    failed_symbols = list(task.get("failed_symbols") or task.get("last_failed_symbols") or [])
+    if not failed_symbols:
+        raise HTTPException(status_code=400, detail="当前任务没有可重试的失败股票")
+    request_payload = dict(task.get("request") or {})
+    dataset = task.get("dataset") or {}
+    request_payload["symbols"] = failed_symbols
+    request_payload["base_dataset_id"] = dataset.get("id") or request_payload.get("base_dataset_id")
+    retry_payload = AkshareAllDatasetRequest(**request_payload)
+    return dataset_sync_manager.submit(retry_payload)
 
 
 @app.get("/api/datasets/akshare/all/tasks/latest")
