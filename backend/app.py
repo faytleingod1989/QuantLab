@@ -19,7 +19,6 @@ from .data import (
     dataset_summary,
     extract_security_daily_status,
     extract_security_master,
-    fetch_akshare_dataset,
     fetch_akshare_security_master,
     fetch_trading_calendar,
     filter_to_trading_calendar,
@@ -53,6 +52,7 @@ from .reports import (
     render_pdf_report,
     summarize_run_comparison,
 )
+from .providers import fetch_free_daily_dataset, free_provider_status
 from .tasks import BacktestTaskManager
 
 
@@ -130,6 +130,7 @@ def data_status() -> dict:
     status = source_status()
     warehouse = repository.market_daily_bar_summary()
     status["warehouse"] = warehouse
+    status["free_providers"] = free_provider_status()
     if warehouse["row_count"]:
         status["message"] = (
             f"{status['message']}；本地日线仓库已有 {warehouse['symbol_count']} 标的、"
@@ -741,9 +742,10 @@ async def sync_akshare_dataset(payload: AkshareDatasetRequest) -> dict:
             if normalize_symbol(symbol) not in covered
         ]
         fetched_frame = None
+        provider_stats: list[dict] = []
         if missing_symbols:
-            fetched_frame = await run_in_threadpool(
-                fetch_akshare_dataset,
+            fetched_frame, provider_stats = await run_in_threadpool(
+                fetch_free_daily_dataset,
                 missing_symbols, payload.start_date, payload.end_date, payload.benchmark
             )
         frame = _merge_market_frames(warehouse_frame, fetched_frame)
@@ -758,6 +760,7 @@ async def sync_akshare_dataset(payload: AkshareDatasetRequest) -> dict:
         "fetched_symbols": len(missing_symbols),
         "reused": bool(warehouse_coverage["covered"]),
     }
+    result["_providers"] = provider_stats
     return result
 
 
@@ -813,8 +816,8 @@ async def sync_all_akshare_dataset(payload: AkshareAllDatasetRequest) -> dict:
             return result
         batch_size = max(1, min(ALL_MARKET_SYNC_BATCH_SIZE, len(missing_symbols)))
         batch_symbols = missing_symbols[:batch_size]
-        frame = await run_in_threadpool(
-            fetch_akshare_dataset,
+        frame, provider_stats = await run_in_threadpool(
+            fetch_free_daily_dataset,
             batch_symbols, payload.start_date, payload.end_date, payload.benchmark
         )
         merged_frame = _merge_market_frames(existing_frame, frame)
@@ -842,6 +845,7 @@ async def sync_all_akshare_dataset(payload: AkshareAllDatasetRequest) -> dict:
         "fetched_symbols": len(batch_symbols),
         "reused": bool(warehouse_coverage["covered"]),
     }
+    result["_providers"] = provider_stats
     added_count = coverage["covered"] - previous_count
     if coverage["covered"] < len(symbols):
         result["_sync_note"] = (

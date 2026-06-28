@@ -5,5 +5,7 @@ numpy>=2.0
 pydantic>=2.9
 pytest>=8.0
 akshare==1.18.64
+efinance>=0.5.5
+baostock>=0.8.9
 reportlab>=4.0
 pypdf>=4.0
