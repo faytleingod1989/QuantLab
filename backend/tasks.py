@@ -3,6 +3,8 @@ from __future__ import annotations
 import logging
 from concurrent.futures import Future, ThreadPoolExecutor
 from threading import Event, Lock
+from time import sleep
+from typing import Any, Callable
 from uuid import uuid4
 
 from .data import load_dataset_view, sample_daily
@@ -106,6 +108,171 @@ class BacktestTaskManager:
             with self._lock:
                 self._cancel_events.pop(run_id, None)
                 self._futures.pop(run_id, None)
+
+    def shutdown(self) -> None:
+        self.executor.shutdown(wait=False, cancel_futures=True)
+
+
+class DatasetSyncTaskManager:
+    """Run long dataset sync jobs outside the request/response lifecycle."""
+
+    def __init__(
+        self,
+        execute_batch: Callable[[Any], dict],
+        max_workers: int = 1,
+        max_consecutive_failures: int = 3,
+        batch_interval_seconds: float = 0.3,
+        retry_interval_seconds: float = 2.0,
+    ):
+        self.execute_batch = execute_batch
+        self.max_consecutive_failures = max(1, max_consecutive_failures)
+        self.batch_interval_seconds = max(0.0, batch_interval_seconds)
+        self.retry_interval_seconds = max(0.0, retry_interval_seconds)
+        self.executor = ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="quantlab-data")
+        self._cancel_events: dict[str, Event] = {}
+        self._futures: dict[str, Future] = {}
+        self._tasks: dict[str, dict] = {}
+        self._latest_task_id: str | None = None
+        self._lock = Lock()
+
+    def submit(self, request: Any) -> dict:
+        with self._lock:
+            active = self._active_locked()
+            if active:
+                return {**active, "duplicate": True}
+            task_id = uuid4().hex
+            now = utc_now()
+            record = {
+                "id": task_id,
+                "type": "all_market_dataset_sync",
+                "status": "queued",
+                "progress": 0.0,
+                "batch_count": 0,
+                "covered": 0,
+                "expected": 0,
+                "added_symbols": 0,
+                "dataset": None,
+                "coverage": None,
+                "providers": [],
+                "sync_note": "",
+                "error": None,
+                "cancel_requested": False,
+                "duplicate": False,
+                "created_at": now,
+                "started_at": None,
+                "finished_at": None,
+            }
+            cancel_event = Event()
+            self._tasks[task_id] = record
+            self._latest_task_id = task_id
+            self._cancel_events[task_id] = cancel_event
+            self._futures[task_id] = self.executor.submit(self._execute, task_id, request, cancel_event)
+            return record.copy()
+
+    def latest(self) -> dict | None:
+        with self._lock:
+            if not self._latest_task_id:
+                return None
+            return self._tasks.get(self._latest_task_id, {}).copy()
+
+    def get(self, task_id: str) -> dict | None:
+        with self._lock:
+            task = self._tasks.get(task_id)
+            return task.copy() if task else None
+
+    def cancel(self, task_id: str) -> bool:
+        with self._lock:
+            event = self._cancel_events.get(task_id)
+            future = self._futures.get(task_id)
+            task_exists = task_id in self._tasks
+            if task_exists:
+                self._tasks[task_id]["cancel_requested"] = True
+        if event:
+            event.set()
+        if future and future.cancel():
+            self._update(task_id, status="cancelled", progress=self._tasks[task_id]["progress"], finished_at=utc_now())
+        return task_exists
+
+    def _execute(self, task_id: str, request: Any, cancel_event: Event) -> None:
+        logger.info("dataset_sync_started task_id=%s", task_id)
+        self._update(task_id, status="running", started_at=utc_now())
+        consecutive_failures = 0
+        base_dataset_id = getattr(request, "base_dataset_id", None)
+
+        try:
+            while not cancel_event.is_set():
+                current_request = (
+                    request.model_copy(update={"base_dataset_id": base_dataset_id})
+                    if hasattr(request, "model_copy")
+                    else request
+                )
+                try:
+                    previous = self.get(task_id) or {}
+                    previous_covered = int(previous.get("covered") or 0)
+                    result = self.execute_batch(current_request)
+                    consecutive_failures = 0
+                except Exception as error:
+                    consecutive_failures += 1
+                    self._update(
+                        task_id,
+                        status="running",
+                        error=str(error),
+                        sync_note=f"同步失败 {consecutive_failures}/{self.max_consecutive_failures}：{error}",
+                    )
+                    if consecutive_failures >= self.max_consecutive_failures:
+                        self._update(task_id, status="failed", finished_at=utc_now())
+                        logger.exception("dataset_sync_failed task_id=%s", task_id)
+                        return
+                    if cancel_event.wait(self.retry_interval_seconds):
+                        break
+                    continue
+
+                coverage = result.get("_coverage") or {}
+                covered = int(coverage.get("covered") or max(0, int(result.get("symbol_count") or 0) - 1))
+                expected = int(coverage.get("expected") or covered)
+                progress = 1.0 if not expected else min(covered / expected, 1.0)
+                batch_count = int((self.get(task_id) or {}).get("batch_count") or 0) + 1
+                added_symbols = max(0, covered - previous_covered)
+                base_dataset_id = result.get("id") or base_dataset_id
+
+                self._update(
+                    task_id,
+                    progress=progress,
+                    batch_count=batch_count,
+                    covered=covered,
+                    expected=expected,
+                    added_symbols=added_symbols,
+                    dataset=result,
+                    coverage=coverage,
+                    providers=result.get("_providers") or [],
+                    sync_note=result.get("_sync_note") or "",
+                    error=None,
+                )
+
+                if expected and covered >= expected:
+                    self._update(task_id, status="completed", progress=1.0, finished_at=utc_now())
+                    logger.info("dataset_sync_completed task_id=%s", task_id)
+                    return
+                if cancel_event.wait(self.batch_interval_seconds):
+                    break
+
+            self._update(task_id, status="cancelled", finished_at=utc_now())
+            logger.info("dataset_sync_cancelled task_id=%s", task_id)
+        finally:
+            with self._lock:
+                self._cancel_events.pop(task_id, None)
+                self._futures.pop(task_id, None)
+
+    def _active_locked(self) -> dict | None:
+        for task in self._tasks.values():
+            if task["status"] in {"queued", "running"}:
+                return task.copy()
+        return None
+
+    def _update(self, task_id: str, **updates: Any) -> None:
+        with self._lock:
+            if task_id in self._tasks:
+                self._tasks[task_id].update(updates)
 
     def shutdown(self) -> None:
         self.executor.shutdown(wait=False, cancel_futures=True)

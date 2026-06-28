@@ -803,6 +803,7 @@ export function DataDrawer({
   onCancelSyncAll,
   syncing,
   syncingAll,
+  allMarketSyncTask,
   onSelectDataset,
   onDeleteDataset,
   close,
@@ -884,6 +885,21 @@ export function DataDrawer({
           </div>
           <button className="icon-button" onClick={close} aria-label="关闭"><X size={20} /></button>
         </div>
+        {allMarketSyncTask?.status && allMarketSyncTask.status !== "idle" ? (
+          <div className="sync-progress-panel compact">
+            <div>
+              <b>全A补齐任务：{allMarketSyncTask.status}</b>
+              <span>
+                第 {allMarketSyncTask.batch_count || 0} 批 · 覆盖 {allMarketSyncTask.covered || 0}/
+                {allMarketSyncTask.expected || allMarketSyncTask.coverage?.expected || "?"}
+              </span>
+            </div>
+            <progress
+              value={Number(allMarketSyncTask.covered || 0)}
+              max={Number(allMarketSyncTask.expected || allMarketSyncTask.coverage?.expected || 1)}
+            />
+          </div>
+        ) : null}
         <div className="dataset-picker">
           <button className={!settings.dataset_id ? "selected" : ""} onClick={() => onSelectDataset(null)}>
             <b>可复现演示数据</b>

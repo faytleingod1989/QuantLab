@@ -53,7 +53,7 @@ from .reports import (
     summarize_run_comparison,
 )
 from .providers import fetch_free_daily_dataset, free_provider_status
-from .tasks import BacktestTaskManager
+from .tasks import BacktestTaskManager, DatasetSyncTaskManager
 
 
 logging.basicConfig(
@@ -94,6 +94,13 @@ task_manager = BacktestTaskManager(
 )
 MIN_ALL_MARKET_SYNC_COVERAGE = 0.8
 ALL_MARKET_SYNC_BATCH_SIZE = int(os.getenv("QUANTLAB_ALL_MARKET_BATCH_SIZE", "200"))
+dataset_sync_manager = DatasetSyncTaskManager(
+    lambda payload: _sync_all_market_batch(payload),
+    max_workers=1,
+    max_consecutive_failures=int(os.getenv("QUANTLAB_DATA_SYNC_MAX_FAILURES", "3")),
+    batch_interval_seconds=float(os.getenv("QUANTLAB_DATA_SYNC_BATCH_INTERVAL", "0.3")),
+    retry_interval_seconds=float(os.getenv("QUANTLAB_DATA_SYNC_RETRY_INTERVAL", "2.0")),
+)
 
 
 @asynccontextmanager
@@ -101,6 +108,7 @@ async def lifespan(_: FastAPI):
     await run_in_threadpool(_backfill_market_warehouse_from_datasets)
     yield
     task_manager.shutdown()
+    dataset_sync_manager.shutdown()
 
 
 app = FastAPI(title="QuantLab A 股回测 API", version="0.4.0", lifespan=lifespan)
@@ -764,6 +772,97 @@ async def sync_akshare_dataset(payload: AkshareDatasetRequest) -> dict:
     return result
 
 
+def _sync_all_market_batch(payload: AkshareAllDatasetRequest) -> dict:
+    symbols = _active_sh_sz_symbols()
+    if not symbols:
+        raise ValueError("没有可同步的沪深 A 股证券主数据")
+    existing_records = _all_market_base_datasets(payload.name, payload.base_dataset_id)
+    existing_record = existing_records[0] if existing_records else None
+    duplicate_records = existing_records[1:]
+    existing_frame = None
+    existing_coverage = {"covered_symbols": []}
+    for record in existing_records:
+        current_frame = load_csv(record["path"])
+        existing_frame = _merge_market_frames(existing_frame, current_frame)
+    warehouse_symbols = symbols if existing_frame is None else [
+        symbol
+        for symbol in symbols
+        if normalize_symbol(symbol) not in set(
+            _all_market_coverage(existing_frame, symbols, payload.benchmark).get("covered_symbols", [])
+        )
+    ]
+    warehouse_frame = _load_market_warehouse(
+        warehouse_symbols, payload.start_date, payload.end_date, payload.benchmark
+    )
+    warehouse_coverage = _market_warehouse_symbol_coverage(
+        warehouse_frame, warehouse_symbols, payload.benchmark, payload.start_date, payload.end_date
+    )
+    existing_frame = _merge_market_frames(existing_frame, warehouse_frame)
+    if existing_frame is not None:
+        existing_coverage = _all_market_coverage(existing_frame, symbols, payload.benchmark)
+    covered = set(existing_coverage.get("covered_symbols", []))
+    missing_symbols = [symbol for symbol in symbols if normalize_symbol(symbol) not in covered]
+    if not missing_symbols and existing_record and existing_frame is not None:
+        result = _replace_dataset_snapshot(existing_record, existing_frame, "akshare_all")
+        for duplicate_record in duplicate_records:
+            _delete_dataset_record_and_file(duplicate_record)
+        result["_coverage"] = {
+            key: value
+            for key, value in _all_market_coverage(existing_frame, symbols, payload.benchmark).items()
+            if key != "covered_symbols"
+        }
+        result["_warehouse"] = {
+            "covered_before_fetch": warehouse_coverage["covered"],
+            "fetched_symbols": 0,
+            "reused": bool(warehouse_coverage["covered"]),
+        }
+        result["_providers"] = []
+        if duplicate_records:
+            result["_consolidated_dataset_ids"] = [record["id"] for record in duplicate_records]
+        result["_sync_note"] = (
+            f"沪深全A已覆盖 {result['_coverage']['covered']} / "
+            f"{result['_coverage']['expected']} 只，无需补齐"
+        )
+        return result
+
+    batch_size = max(1, min(ALL_MARKET_SYNC_BATCH_SIZE, len(missing_symbols)))
+    batch_symbols = missing_symbols[:batch_size]
+    frame, provider_stats = fetch_free_daily_dataset(
+        batch_symbols, payload.start_date, payload.end_date, payload.benchmark
+    )
+    merged_frame = _merge_market_frames(existing_frame, frame)
+    coverage = _all_market_coverage(merged_frame, symbols, payload.benchmark)
+    previous_count = len(covered)
+    if coverage["covered"] <= previous_count:
+        raise ValueError(
+            f"本批未新增任何 A 股行情，当前仍为 {previous_count} / {coverage['expected']} 只。"
+            " 可能是免费数据源或网络限流，请稍后再试。"
+        )
+    if existing_record:
+        result = _replace_dataset_snapshot(existing_record, merged_frame, "akshare_all")
+        for duplicate_record in duplicate_records:
+            _delete_dataset_record_and_file(duplicate_record)
+        if duplicate_records:
+            result["_consolidated_dataset_ids"] = [record["id"] for record in duplicate_records]
+    else:
+        result = _persist_dataset(payload.name, merged_frame, "akshare_all")
+    result["_coverage"] = {key: value for key, value in coverage.items() if key != "covered_symbols"}
+    result["_warehouse"] = {
+        "covered_before_fetch": warehouse_coverage["covered"],
+        "fetched_symbols": len(batch_symbols),
+        "reused": bool(warehouse_coverage["covered"]),
+    }
+    result["_providers"] = provider_stats
+    added_count = coverage["covered"] - previous_count
+    if coverage["covered"] < len(symbols):
+        result["_sync_note"] = (
+            f"本批尝试 {len(batch_symbols)} 只，新增 {added_count} 只；"
+            f"累计覆盖 {coverage['covered']} / {coverage['expected']} 只。"
+            " 后台任务会继续自动补齐剩余股票。"
+        )
+    return result
+
+
 @app.post("/api/datasets/akshare/all", status_code=201)
 async def sync_all_akshare_dataset(payload: AkshareAllDatasetRequest) -> dict:
     try:
@@ -854,6 +953,32 @@ async def sync_all_akshare_dataset(payload: AkshareAllDatasetRequest) -> dict:
             " 可继续点击「同步沪深全A」补齐剩余股票。"
         )
     return result
+
+
+@app.post("/api/datasets/akshare/all/tasks", status_code=202)
+def start_all_market_sync_task(payload: AkshareAllDatasetRequest) -> dict:
+    return dataset_sync_manager.submit(payload)
+
+
+@app.get("/api/datasets/akshare/all/tasks/latest")
+def latest_all_market_sync_task() -> dict:
+    task = dataset_sync_manager.latest()
+    return task or {"status": "idle"}
+
+
+@app.get("/api/datasets/akshare/all/tasks/{task_id}")
+def get_all_market_sync_task(task_id: str) -> dict:
+    task = dataset_sync_manager.get(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="同步任务不存在")
+    return task
+
+
+@app.delete("/api/datasets/akshare/all/tasks/{task_id}")
+def cancel_all_market_sync_task(task_id: str) -> dict:
+    if not dataset_sync_manager.cancel(task_id):
+        raise HTTPException(status_code=404, detail="同步任务不存在")
+    return dataset_sync_manager.get(task_id) or {"id": task_id, "status": "cancel_requested"}
 
 
 @app.delete("/api/datasets/{dataset_id}")

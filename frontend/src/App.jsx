@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 
 import { API, initialSettings, navItems } from "./appConfig";
 import {
@@ -73,6 +73,7 @@ function DataCenterPage({
   onSyncAll,
   onCancelSyncAll,
   syncingAll,
+  allMarketSyncTask,
   onSelectDataset,
   onDeleteDataset,
 }) {
@@ -90,6 +91,9 @@ function DataCenterPage({
       ? `当前快照覆盖不足：${selectedCoverage.syncedCount} / ${selectedCoverage.expectedCount} 标的`
       : `当前：${selectedDataset.name}`
     : "当前使用演示数据";
+  const taskCovered = Number(allMarketSyncTask?.covered || allMarketSyncTask?.coverage?.covered || 0);
+  const taskExpected = Number(allMarketSyncTask?.expected || allMarketSyncTask?.coverage?.expected || 0);
+  const taskProgress = taskExpected ? Math.round((taskCovered / taskExpected) * 100) : 0;
   return (
     <section className="view-page">
       <div className="view-hero">
@@ -105,6 +109,15 @@ function DataCenterPage({
           <button className="primary" onClick={openData}>打开数据管理</button>
         </div>
       </div>
+      {allMarketSyncTask?.status && allMarketSyncTask.status !== "idle" ? (
+        <div className="sync-progress-panel">
+          <div>
+            <b>全A补齐任务：{allMarketSyncTask.status}</b>
+            <span>第 {allMarketSyncTask.batch_count || 0} 批 · 覆盖 {taskCovered}/{taskExpected || "?"} · {taskProgress}%</span>
+          </div>
+          <progress value={taskCovered} max={taskExpected || 1} />
+        </div>
+      ) : null}
       <div className="page-card-grid">
         <PageCard title="数据快照" value={`${datasets.length} 个`} note={snapshotNote} />
         <PageCard title="沪深可同步股票" value={`${syncableAllMarketCount || securities.length} 只`} note={syncableAllMarketCount ? `主表总计 ${securities.length} 只；北交所/退市不纳入全 A 同步` : "等待证券主表加载"} />
@@ -423,7 +436,7 @@ function App() {
   const [importing, setImporting] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncingAll, setSyncingAll] = useState(false);
-  const allMarketSyncAbortRef = useRef(null);
+  const [allMarketSyncTask, setAllMarketSyncTask] = useState(null);
   const [strategyRecord, setStrategyRecord] = useState(null);
   const [savingStrategy, setSavingStrategy] = useState(false);
   const [strategyEditorMode, setStrategyEditorMode] = useState("trading");
@@ -568,21 +581,94 @@ function App() {
     }
   };
 
-  const cancelAllMarketSync = () => {
-    allMarketSyncAbortRef.current?.abort();
-    setNotice("正在停止自动补齐全A…");
+  const applyAllMarketSyncTask = (task, showTerminalNotice = false) => {
+    if (!task || task.status === "idle") {
+      setSyncingAll(false);
+      return;
+    }
+    setAllMarketSyncTask(task);
+    const isActive = task.status === "queued" || task.status === "running";
+    setSyncingAll(isActive);
+    if (task.dataset) {
+      const dataset = task.dataset;
+      setDatasets((current) => {
+        const consolidatedIds = new Set(dataset._consolidated_dataset_ids || []);
+        return [dataset, ...current.filter((item) => item.id !== dataset.id && !consolidatedIds.has(item.id))];
+      });
+      applyDataset(dataset, dataset.summary?.symbols);
+      setDatasetQuality({ dataset, summary: dataset.summary, quality_checks: dataset.quality_checks || [] });
+    }
+    const covered = Number(task.covered || task.coverage?.covered || 0);
+    const expected = Number(task.expected || task.coverage?.expected || 0);
+    if (isActive) {
+      setNotice(`自动补齐全A：第 ${task.batch_count || 0} 批，覆盖 ${covered}/${expected || "?"}，后台继续处理中…`);
+    } else if (showTerminalNotice && task.status === "completed") {
+      setNotice(`全A自动补齐完成：覆盖 ${covered}/${expected || "全部"}，共执行 ${task.batch_count || 0} 批。`);
+    } else if (showTerminalNotice && task.status === "failed") {
+      setNotice(`全A自动补齐失败：${task.error || "免费数据源暂不可用"}`);
+    } else if (showTerminalNotice && task.status === "cancelled") {
+      setNotice("已停止自动补齐全A，当前已完成的批次会保留在数据集中。");
+    }
+  };
+
+  const cancelAllMarketSync = async () => {
+    if (!allMarketSyncTask?.id) {
+      setNotice("当前没有正在运行的全A补齐任务。");
+      return;
+    }
+    try {
+      const response = await fetch(`${API}/datasets/akshare/all/tasks/${allMarketSyncTask.id}`, { method: "DELETE" });
+      if (!response.ok) throw new Error((await response.json()).detail || "停止任务失败");
+      const task = await response.json();
+      applyAllMarketSyncTask(task, true);
+      setNotice("正在停止自动补齐全A…");
+    } catch (error) {
+      setNotice(`停止失败：${errorMessage(error)}`);
+    }
+  };
+
+  const startAllMarketSync = async () => {
+    setSyncingAll(true);
+    setNotice("正在启动全A后台补齐任务…");
+    try {
+      const allMarketName = `AkShare 沪深全A ${settings.start_date} 至 ${settings.end_date}`;
+      const baseAllMarketDataset = datasets.find((item) => (
+        item.id === settings.dataset_id && item.source === "akshare_all" && item.name === allMarketName
+      )) || datasets.find((item) => item.source === "akshare_all" && item.name === allMarketName);
+      const response = await fetch(`${API}/datasets/akshare/all/tasks`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: allMarketName,
+          start_date: settings.start_date,
+          end_date: settings.end_date,
+          benchmark: settings.benchmark,
+          base_dataset_id: baseAllMarketDataset?.id || null,
+        }),
+      });
+      if (!response.ok) throw new Error((await response.json()).detail || "启动全A同步任务失败");
+      const task = await response.json();
+      applyAllMarketSyncTask(task);
+      setNotice(task.duplicate ? "已有全A补齐任务正在运行，已切换到该任务进度。" : "全A后台补齐任务已启动。");
+    } catch (error) {
+      setSyncingAll(false);
+      setNotice(`启动失败：${errorMessage(error)}`);
+    }
   };
 
   const syncAkshare = async (scope = "selected") => {
     const allMarket = scope === "all";
+    if (allMarket) {
+      await startAllMarketSync();
+      return;
+    }
     // 选股同步时检查数量上限
     if (!allMarket && settings.symbols.length > 20) {
       setNotice(`选股同步最多支持 20 只股票，当前选择了 ${settings.symbols.length} 只。请先缩小股票池，或使用「同步沪深全A」。`);
       return;
     }
-    const abortController = allMarket ? new AbortController() : null;
-    if (allMarket) allMarketSyncAbortRef.current = abortController;
-    allMarket ? setSyncingAll(true) : setSyncing(true);
+    const abortController = null;
+    setSyncing(true);
     setNotice("");
     try {
       const allMarketName = `AkShare 沪深全A ${settings.start_date} 至 ${settings.end_date}`;
@@ -653,8 +739,7 @@ function App() {
         setNotice(`同步失败：${errorMessage(error)}`);
       }
     } finally {
-      if (allMarketSyncAbortRef.current === abortController) allMarketSyncAbortRef.current = null;
-      allMarket ? setSyncingAll(false) : setSyncing(false);
+      setSyncing(false);
     }
   };
 
@@ -739,6 +824,33 @@ function App() {
   useEffect(() => {
     fetch(`${API}/datasets`).then((response) => response.json()).then(setDatasets).catch((error) => logIgnoredError("加载数据集失败", error));
   }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const pollAllMarketTask = async () => {
+      try {
+        const response = await fetch(`${API}/datasets/akshare/all/tasks/latest`);
+        if (!response.ok) return;
+        const task = await response.json();
+        if (cancelled) return;
+        if (task.status && task.status !== "idle") {
+          const terminal = syncingAll && ["completed", "failed", "cancelled"].includes(task.status);
+          applyAllMarketSyncTask(task, terminal);
+        } else if (!syncingAll) {
+          setAllMarketSyncTask(null);
+        }
+      } catch (error) {
+        logIgnoredError("刷新全A同步任务失败", error);
+      }
+    };
+    pollAllMarketTask();
+    if (!syncingAll) return () => { cancelled = true; };
+    const timer = window.setInterval(pollAllMarketTask, 1500);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [syncingAll]);
 
   useEffect(() => {
     fetch(`${API}/projects/default/strategies`)
@@ -866,6 +978,7 @@ function App() {
           onSyncAll={() => syncAkshare("all")}
           onCancelSyncAll={cancelAllMarketSync}
           syncingAll={syncingAll}
+          allMarketSyncTask={allMarketSyncTask}
           onSelectDataset={selectDataset}
           onDeleteDataset={deleteDataset}
         />
@@ -965,6 +1078,7 @@ function App() {
           onCancelSyncAll={cancelAllMarketSync}
           syncing={syncing}
           syncingAll={syncingAll}
+          allMarketSyncTask={allMarketSyncTask}
           onSelectDataset={selectDataset}
           onDeleteDataset={deleteDataset}
           close={() => setDrawer(null)}
