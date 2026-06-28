@@ -3,7 +3,7 @@ import time
 import pandas as pd
 import pytest
 
-from backend.data import extract_security_daily_status, extract_security_master, load_csv_text, sample_daily
+from backend.data import extract_security_daily_status, extract_security_master, load_csv_text, prepare_market_frame, sample_daily
 from backend.engine import BacktestCancelled, run_backtest
 from backend.models import BacktestRequest
 from backend.repository import BacktestRepository
@@ -116,6 +116,24 @@ def test_repository_persists_security_master_and_daily_status(tmp_path):
     status = repository.list_security_daily_status("600519.SH", "2024-01-02", "2024-01-05")
     assert len(status) == len(frame)
     assert {"is_st", "suspended", "suspension_streak", "long_suspended", "limit_exempt", "limit_reason", "limit_up", "limit_down"} <= set(status[0])
+
+
+def test_repository_persists_market_daily_warehouse(tmp_path):
+    from backend import app as app_module
+
+    repository = BacktestRepository(tmp_path / "quantlab.db")
+    frame = prepare_market_frame(sample_daily("600519.SH", "2024-01-02", "2024-01-05"))
+    repository.upsert_market_daily_bars(app_module._warehouse_records_from_frame(frame, "csv"))
+
+    rows = repository.list_market_daily_bars(["600519.SH"], "2024-01-02", "2024-01-05")
+    summary = repository.market_daily_bar_summary()
+
+    assert len(rows) == len(frame)
+    assert rows[0]["symbol"] == "600519.SH"
+    assert {"limit_exempt", "suspended", "corporate_action", "adjustment_anomaly"} <= set(rows[0])
+    assert summary["row_count"] == len(frame)
+    assert summary["symbol_count"] == 1
+    assert summary["start_date"] == "2024-01-02"
 
 
 def test_repository_persists_industry_history(tmp_path):
@@ -293,6 +311,22 @@ def test_all_market_base_dataset_prefers_explicit_id_and_same_name(monkeypatch):
     with pytest.raises(HTTPException) as error:
         app_module._all_market_base_datasets("AkShare 沪深全A 2025", "other-date")
     assert error.value.status_code == 400
+
+
+def test_market_warehouse_coverage_requires_requested_date_span():
+    from backend import app as app_module
+
+    frame = prepare_market_frame(sample_daily("600519.SH", "2024-01-02", "2024-01-05"))
+
+    short_span = app_module._market_warehouse_symbol_coverage(
+        frame, ["600519.SH"], start_date="2024-01-01", end_date="2024-01-10"
+    )
+    long_span = app_module._market_warehouse_symbol_coverage(
+        frame, ["600519.SH"], start_date="2024-01-01", end_date="2024-03-01"
+    )
+
+    assert short_span["covered"] == 1
+    assert long_span["covered"] == 0
 
 
 def test_real_security_master_overrides_demo_seed_listing_date(tmp_path):

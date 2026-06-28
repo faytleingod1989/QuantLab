@@ -210,6 +210,42 @@ class BacktestRepository:
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS market_daily_bars (
+                    symbol TEXT NOT NULL,
+                    trade_date TEXT NOT NULL,
+                    name TEXT NOT NULL,
+                    listed_date TEXT,
+                    open REAL NOT NULL,
+                    high REAL NOT NULL,
+                    low REAL NOT NULL,
+                    close REAL NOT NULL,
+                    prev_close REAL NOT NULL,
+                    volume REAL NOT NULL,
+                    amount REAL NOT NULL,
+                    limit_rate REAL NOT NULL,
+                    limit_up REAL NOT NULL,
+                    limit_down REAL NOT NULL,
+                    limit_exempt INTEGER NOT NULL DEFAULT 0,
+                    limit_reason TEXT NOT NULL DEFAULT '',
+                    suspended INTEGER NOT NULL DEFAULT 0,
+                    adjust_factor REAL NOT NULL DEFAULT 1.0,
+                    adjusted_close REAL NOT NULL,
+                    corporate_action INTEGER NOT NULL DEFAULT 0,
+                    adjustment_anomaly INTEGER NOT NULL DEFAULT 0,
+                    source TEXT NOT NULL DEFAULT 'unknown',
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(symbol, trade_date)
+                )
+                """
+            )
+            connection.execute(
+                """
+                CREATE INDEX IF NOT EXISTS idx_market_daily_bars_symbol_date
+                ON market_daily_bars(symbol, trade_date)
+                """
+            )
 
     @staticmethod
     def _ensure_column(connection: sqlite3.Connection, table: str, column: str, kind: str) -> None:
@@ -584,6 +620,126 @@ class BacktestRepository:
                     for record in records
                 ],
             )
+
+    def upsert_market_daily_bars(self, records: list[dict[str, Any]]) -> None:
+        if not records:
+            return
+        now = utc_now()
+        with self._connect() as connection:
+            connection.executemany(
+                """
+                INSERT INTO market_daily_bars(
+                    symbol, trade_date, name, listed_date, open, high, low, close,
+                    prev_close, volume, amount, limit_rate, limit_up, limit_down,
+                    limit_exempt, limit_reason, suspended, adjust_factor, adjusted_close,
+                    corporate_action, adjustment_anomaly, source, updated_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol, trade_date) DO UPDATE SET
+                    name = excluded.name,
+                    listed_date = COALESCE(excluded.listed_date, market_daily_bars.listed_date),
+                    open = excluded.open,
+                    high = excluded.high,
+                    low = excluded.low,
+                    close = excluded.close,
+                    prev_close = excluded.prev_close,
+                    volume = excluded.volume,
+                    amount = excluded.amount,
+                    limit_rate = excluded.limit_rate,
+                    limit_up = excluded.limit_up,
+                    limit_down = excluded.limit_down,
+                    limit_exempt = excluded.limit_exempt,
+                    limit_reason = excluded.limit_reason,
+                    suspended = excluded.suspended,
+                    adjust_factor = excluded.adjust_factor,
+                    adjusted_close = excluded.adjusted_close,
+                    corporate_action = excluded.corporate_action,
+                    adjustment_anomaly = excluded.adjustment_anomaly,
+                    source = excluded.source,
+                    updated_at = excluded.updated_at
+                """,
+                [
+                    (
+                        record["symbol"],
+                        record["trade_date"],
+                        record.get("name") or record["symbol"],
+                        record.get("listed_date"),
+                        float(record["open"]),
+                        float(record["high"]),
+                        float(record["low"]),
+                        float(record["close"]),
+                        float(record["prev_close"]),
+                        float(record["volume"]),
+                        float(record["amount"]),
+                        float(record["limit_rate"]),
+                        float(record["limit_up"]),
+                        float(record["limit_down"]),
+                        int(bool(record.get("limit_exempt", False))),
+                        record.get("limit_reason", ""),
+                        int(bool(record.get("suspended", False))),
+                        float(record.get("adjust_factor", 1.0)),
+                        float(record["adjusted_close"]),
+                        int(bool(record.get("corporate_action", False))),
+                        int(bool(record.get("adjustment_anomaly", False))),
+                        record.get("source", "unknown"),
+                        now,
+                    )
+                    for record in records
+                ],
+            )
+
+    def list_market_daily_bars(
+        self, symbols: list[str], start_date: str | None = None, end_date: str | None = None
+    ) -> list[dict[str, Any]]:
+        if not symbols:
+            return []
+        placeholders = ",".join("?" for _ in symbols)
+        filters = [f"symbol IN ({placeholders})"]
+        values: list[Any] = list(symbols)
+        if start_date:
+            filters.append("trade_date >= ?")
+            values.append(start_date)
+        if end_date:
+            filters.append("trade_date <= ?")
+            values.append(end_date)
+        where = " AND ".join(filters)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT * FROM market_daily_bars
+                WHERE {where}
+                ORDER BY symbol, trade_date
+                """,
+                values,
+            ).fetchall()
+        return [
+            {
+                **dict(row),
+                "limit_exempt": bool(row["limit_exempt"]),
+                "suspended": bool(row["suspended"]),
+                "corporate_action": bool(row["corporate_action"]),
+                "adjustment_anomaly": bool(row["adjustment_anomaly"]),
+            }
+            for row in rows
+        ]
+
+    def market_daily_bar_summary(self) -> dict[str, Any]:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT
+                    COUNT(*) AS row_count,
+                    COUNT(DISTINCT symbol) AS symbol_count,
+                    MIN(trade_date) AS start_date,
+                    MAX(trade_date) AS end_date
+                FROM market_daily_bars
+                """
+            ).fetchone()
+        return {
+            "row_count": int(row["row_count"] or 0),
+            "symbol_count": int(row["symbol_count"] or 0),
+            "start_date": row["start_date"],
+            "end_date": row["end_date"],
+        }
 
     def list_securities(self, *, include_inactive: bool = False) -> list[dict[str, Any]]:
         where = "" if include_inactive else "WHERE status != 'delisted'"

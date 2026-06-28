@@ -98,6 +98,7 @@ ALL_MARKET_SYNC_BATCH_SIZE = int(os.getenv("QUANTLAB_ALL_MARKET_BATCH_SIZE", "20
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
+    await run_in_threadpool(_backfill_market_warehouse_from_datasets)
     yield
     task_manager.shutdown()
 
@@ -126,7 +127,15 @@ def health() -> dict:
 
 @app.get("/api/data/status")
 def data_status() -> dict:
-    return source_status()
+    status = source_status()
+    warehouse = repository.market_daily_bar_summary()
+    status["warehouse"] = warehouse
+    if warehouse["row_count"]:
+        status["message"] = (
+            f"{status['message']}；本地日线仓库已有 {warehouse['symbol_count']} 标的、"
+            f"{warehouse['row_count']} 行"
+        )
+    return status
 
 
 @app.get("/api/securities")
@@ -488,6 +497,8 @@ def _delete_dataset_record_and_file(record: dict) -> None:
 def _merge_market_frames(existing_frame, new_frame):
     if existing_frame is None or existing_frame.empty:
         return new_frame
+    if new_frame is None or new_frame.empty:
+        return existing_frame
     combined = pd.concat([existing_frame, new_frame], ignore_index=True)
     combined["symbol"] = combined["symbol"].map(normalize_symbol)
     combined["trade_date"] = pd.to_datetime(combined["trade_date"])
@@ -516,8 +527,113 @@ def _enrich_frame_with_security_master(frame) -> object:
     return prepare_market_frame(current)
 
 
+def _warehouse_records_from_frame(frame, source: str) -> list[dict]:
+    current = frame.copy()
+    output = current.assign(
+        trade_date=current["trade_date"].dt.strftime("%Y-%m-%d"),
+        listed_date=current["listed_date"].dt.strftime("%Y-%m-%d").fillna(""),
+        source=source,
+    )
+    records = output.to_dict(orient="records")
+    for record in records:
+        if not record.get("listed_date"):
+            record["listed_date"] = None
+    return records
+
+
+def _store_market_warehouse(frame, source: str) -> None:
+    repository.upsert_market_daily_bars(_warehouse_records_from_frame(frame, source))
+
+
+def _load_market_warehouse(symbols: list[str], start_date: str, end_date: str, benchmark: str | None = None):
+    requested = sorted({normalize_symbol(symbol) for symbol in symbols})
+    if benchmark:
+        requested.append(normalize_symbol(benchmark))
+    records = repository.list_market_daily_bars(sorted(set(requested)), start_date, end_date)
+    if not records:
+        return None
+    return _enrich_frame_with_security_master(pd.DataFrame(records))
+
+
+def _market_warehouse_symbol_coverage(
+    frame,
+    requested_symbols: list[str],
+    benchmark: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict:
+    if frame is None or frame.empty:
+        requested = {normalize_symbol(symbol) for symbol in requested_symbols}
+        return {
+            "expected": len(requested),
+            "covered": 0,
+            "missing": len(requested),
+            "coverage": 0,
+            "covered_symbols": [],
+        }
+    requested = {normalize_symbol(symbol) for symbol in requested_symbols}
+    current = frame.copy()
+    current["trade_date"] = pd.to_datetime(current["trade_date"])
+    start_boundary = pd.to_datetime(start_date, errors="coerce") if start_date else None
+    end_boundary = pd.to_datetime(end_date, errors="coerce") if end_date else None
+    synced = set()
+    for symbol, group in current.groupby("symbol", sort=False):
+        normalized = normalize_symbol(symbol)
+        if normalized not in requested:
+            continue
+        first_date = group["trade_date"].min()
+        last_date = group["trade_date"].max()
+        listed_date = pd.to_datetime(group["listed_date"], errors="coerce").dropna().min()
+        start_ok = True
+        end_ok = True
+        if start_boundary is not None and pd.notna(start_boundary):
+            start_ok = first_date <= start_boundary + pd.Timedelta(days=7)
+            if pd.notna(listed_date) and listed_date > start_boundary:
+                start_ok = first_date <= listed_date + pd.Timedelta(days=7)
+        if end_boundary is not None and pd.notna(end_boundary):
+            end_ok = last_date >= end_boundary - pd.Timedelta(days=7)
+        if start_ok and end_ok:
+            synced.add(normalized)
+    if benchmark:
+        synced -= {normalize_symbol(benchmark)}
+    covered = sorted(synced & requested)
+    expected = len(requested)
+    return {
+        "expected": expected,
+        "covered": len(covered),
+        "missing": max(0, expected - len(covered)),
+        "coverage": (len(covered) / expected) if expected else 0,
+        "covered_symbols": covered,
+    }
+
+
+def _backfill_market_warehouse_from_datasets() -> dict:
+    summary = repository.market_daily_bar_summary()
+    if summary["row_count"]:
+        return {"skipped": True, **summary}
+    imported = {"datasets": 0, "rows": 0}
+    for dataset in reversed(repository.list_datasets()):
+        try:
+            dataset_path = Path(dataset["path"])
+            if not dataset_path.is_file():
+                continue
+            frame = load_csv(dataset_path)
+            _store_market_warehouse(frame, dataset.get("source", "csv"))
+            imported["datasets"] += 1
+            imported["rows"] += len(frame)
+        except (OSError, ValueError) as error:
+            logger.warning("warehouse_backfill_dataset_failed dataset_id=%s error=%s", dataset.get("id"), error)
+    if imported["rows"]:
+        logger.info(
+            "market_warehouse_backfilled datasets=%s rows=%s",
+            imported["datasets"], imported["rows"],
+        )
+    return {"skipped": False, **imported}
+
+
 def _persist_dataset(name: str, frame, source: str) -> dict:
     frame = _enrich_frame_with_security_master(frame)
+    _store_market_warehouse(frame, source)
     normalized = frame.to_csv(index=False, date_format="%Y-%m-%d").encode("utf-8")
     fingerprint = hashlib.sha256(normalized).hexdigest()
     summary = dataset_summary(frame, prepared=True)
@@ -562,6 +678,7 @@ def _persist_dataset(name: str, frame, source: str) -> dict:
 
 def _replace_dataset_snapshot(record: dict, frame, source: str) -> dict:
     frame = _enrich_frame_with_security_master(frame)
+    _store_market_warehouse(frame, source)
     normalized = frame.to_csv(index=False, date_format="%Y-%m-%d").encode("utf-8")
     fingerprint = hashlib.sha256(normalized).hexdigest()
     summary = dataset_summary(frame, prepared=True)
@@ -611,14 +728,37 @@ async def sync_akshare_dataset(payload: AkshareDatasetRequest) -> dict:
                    " 请先缩小股票池再试，或使用「同步沪深全A」。",
         )
     try:
-        frame = await run_in_threadpool(
-            fetch_akshare_dataset,
+        warehouse_frame = await run_in_threadpool(
+            _load_market_warehouse,
             payload.symbols, payload.start_date, payload.end_date, payload.benchmark
         )
+        warehouse_coverage = _market_warehouse_symbol_coverage(
+            warehouse_frame, payload.symbols, payload.benchmark, payload.start_date, payload.end_date
+        )
+        covered = set(warehouse_coverage.get("covered_symbols", []))
+        missing_symbols = [
+            symbol for symbol in payload.symbols
+            if normalize_symbol(symbol) not in covered
+        ]
+        fetched_frame = None
+        if missing_symbols:
+            fetched_frame = await run_in_threadpool(
+                fetch_akshare_dataset,
+                missing_symbols, payload.start_date, payload.end_date, payload.benchmark
+            )
+        frame = _merge_market_frames(warehouse_frame, fetched_frame)
+        if frame is None or frame.empty:
+            raise ValueError("本地仓库和免费数据源都未能提供可用行情")
     except (DataSourceError, ValueError) as error:
         logger.warning("akshare_sync_failed error=%s", error)
         raise HTTPException(status_code=502, detail=str(error)) from error
-    return await run_in_threadpool(_persist_dataset, payload.name, frame, "akshare")
+    result = await run_in_threadpool(_persist_dataset, payload.name, frame, "akshare")
+    result["_warehouse"] = {
+        "covered_before_fetch": warehouse_coverage["covered"],
+        "fetched_symbols": len(missing_symbols),
+        "reused": bool(warehouse_coverage["covered"]),
+    }
+    return result
 
 
 @app.post("/api/datasets/akshare/all", status_code=201)
@@ -637,6 +777,21 @@ async def sync_all_akshare_dataset(payload: AkshareAllDatasetRequest) -> dict:
         for record in existing_records:
             current_frame = await run_in_threadpool(load_csv, record["path"])
             existing_frame = _merge_market_frames(existing_frame, current_frame)
+        warehouse_symbols = symbols if existing_frame is None else [
+            symbol
+            for symbol in symbols
+            if normalize_symbol(symbol) not in set(
+                _all_market_coverage(existing_frame, symbols, payload.benchmark).get("covered_symbols", [])
+            )
+        ]
+        warehouse_frame = await run_in_threadpool(
+            _load_market_warehouse,
+            warehouse_symbols, payload.start_date, payload.end_date, payload.benchmark
+        )
+        warehouse_coverage = _market_warehouse_symbol_coverage(
+            warehouse_frame, warehouse_symbols, payload.benchmark, payload.start_date, payload.end_date
+        )
+        existing_frame = _merge_market_frames(existing_frame, warehouse_frame)
         if existing_frame is not None:
             existing_coverage = _all_market_coverage(existing_frame, symbols, payload.benchmark)
         covered = set(existing_coverage.get("covered_symbols", []))
@@ -682,6 +837,11 @@ async def sync_all_akshare_dataset(payload: AkshareAllDatasetRequest) -> dict:
     else:
         result = await run_in_threadpool(_persist_dataset, payload.name, merged_frame, "akshare_all")
     result["_coverage"] = {key: value for key, value in coverage.items() if key != "covered_symbols"}
+    result["_warehouse"] = {
+        "covered_before_fetch": warehouse_coverage["covered"],
+        "fetched_symbols": len(batch_symbols),
+        "reused": bool(warehouse_coverage["covered"]),
+    }
     added_count = coverage["covered"] - previous_count
     if coverage["covered"] < len(symbols):
         result["_sync_note"] = (
