@@ -3,6 +3,7 @@ frontend/dist/
 frontend/.npm-cache/
 .playwright-cli/
 output/playwright/
+output/*.log
 __pycache__/
 .pytest_cache/
 *.pyc
