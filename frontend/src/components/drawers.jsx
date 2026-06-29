@@ -827,6 +827,7 @@ export function DataDrawer({
   syncing,
   syncingAll,
   allMarketSyncTask,
+  marketCoverage,
   onSelectDataset,
   onDeleteDataset,
   close,
@@ -856,6 +857,11 @@ export function DataDrawer({
       })),
     [securities, settings.benchmark]
   );
+  const coverageByPool = useMemo(
+    () => Object.fromEntries((marketCoverage?.pools || []).map((pool) => [pool.id, pool.coverage])),
+    [marketCoverage]
+  );
+  const selectedCoverage = marketCoverage?.selected?.coverage;
   const allMarketPoolCount = stockPools.find((pool) => pool.id === "all_a")?.symbols.length || 0;
   const hasIncompleteAllMarketDataset = datasets.some((dataset) => (
     dataset.source === "akshare_all" &&
@@ -991,7 +997,10 @@ export function DataDrawer({
             <div className="security-bulk-panel">
               <div className="security-bulk-copy">
                 <b>批量选择股票池</b>
-                <small>直接选择全市场或指定板块；北交所暂不纳入全A。</small>
+                <small>
+                  时间：{settings.start_date} — {settings.end_date}
+                  {selectedCoverage ? `；当前选择本地覆盖 ${selectedCoverage.covered}/${selectedCoverage.expected}，缺 ${selectedCoverage.missing}` : ""}
+                </small>
               </div>
               <div className="security-bulk-actions">
                 {stockPools.map((pool) => (
@@ -1005,6 +1014,7 @@ export function DataDrawer({
                     <b>{pool.title}</b>
                     <span>
                       {settings.symbols.filter((symbol) => pool.symbols.includes(symbol)).length}/{pool.symbols.length} 只 · {pool.helper}
+                      {coverageByPool[pool.id] ? ` · 本地 ${coverageByPool[pool.id].covered}/${coverageByPool[pool.id].expected}，缺 ${coverageByPool[pool.id].missing}` : ""}
                     </span>
                   </button>
                 ))}
@@ -1016,7 +1026,7 @@ export function DataDrawer({
                   清空选择
                 </button>
               </div>
-              <small className="security-bulk-note">批量选择会设置当前回测股票池；如需真实全A行情，请优先使用“同步沪深全A”生成数据快照。</small>
+              <small className="security-bulk-note">批量选择负责确定股票池；“同步所选”会按当前时间范围检查本地仓库，已有行情直接复用，只补缺失标的。</small>
             </div>
             <div className="security-search">
               <input

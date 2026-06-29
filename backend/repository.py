@@ -711,13 +711,13 @@ class BacktestRepository:
         if not symbols:
             return []
         placeholders = ",".join("?" for _ in symbols)
-        filters = [f"symbol IN ({placeholders})"]
+        filters = [f"market_daily_bars.symbol IN ({placeholders})"]
         values: list[Any] = list(symbols)
         if start_date:
-            filters.append("trade_date >= ?")
+            filters.append("market_daily_bars.trade_date >= ?")
             values.append(start_date)
         if end_date:
-            filters.append("trade_date <= ?")
+            filters.append("market_daily_bars.trade_date <= ?")
             values.append(end_date)
         where = " AND ".join(filters)
         with self._connect() as connection:
@@ -736,6 +736,49 @@ class BacktestRepository:
                 "suspended": bool(row["suspended"]),
                 "corporate_action": bool(row["corporate_action"]),
                 "adjustment_anomaly": bool(row["adjustment_anomaly"]),
+            }
+            for row in rows
+        ]
+
+    def market_daily_symbol_ranges(
+        self, symbols: list[str], start_date: str | None = None, end_date: str | None = None
+    ) -> list[dict[str, Any]]:
+        if not symbols:
+            return []
+        placeholders = ",".join("?" for _ in symbols)
+        filters = [f"market_daily_bars.symbol IN ({placeholders})"]
+        values: list[Any] = list(symbols)
+        if start_date:
+            filters.append("market_daily_bars.trade_date >= ?")
+            values.append(start_date)
+        if end_date:
+            filters.append("market_daily_bars.trade_date <= ?")
+            values.append(end_date)
+        where = " AND ".join(filters)
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT
+                    market_daily_bars.symbol,
+                    MIN(market_daily_bars.trade_date) AS first_date,
+                    MAX(market_daily_bars.trade_date) AS last_date,
+                    COALESCE(MIN(market_daily_bars.listed_date), securities.listed_date) AS listed_date,
+                    COUNT(*) AS row_count
+                FROM market_daily_bars
+                LEFT JOIN securities ON securities.symbol = market_daily_bars.symbol
+                WHERE {where}
+                GROUP BY market_daily_bars.symbol
+                ORDER BY market_daily_bars.symbol
+                """,
+                values,
+            ).fetchall()
+        return [
+            {
+                "symbol": row["symbol"],
+                "first_date": row["first_date"],
+                "last_date": row["last_date"],
+                "listed_date": row["listed_date"],
+                "row_count": int(row["row_count"] or 0),
             }
             for row in rows
         ]

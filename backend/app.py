@@ -4,6 +4,7 @@ import logging
 import os
 import hashlib
 from contextlib import asynccontextmanager
+from datetime import date, timedelta
 from pathlib import Path
 from uuid import uuid4
 
@@ -38,6 +39,7 @@ from .models import (
     AkshareDatasetRequest,
     CsvDatasetRequest,
     IndustryHistoryCsvRequest,
+    MarketCoverageRequest,
     ProjectCreate,
     StrategyCreate,
     StrategyVersionCreate,
@@ -413,6 +415,130 @@ def list_datasets() -> list[dict]:
     return repository.list_datasets()
 
 
+@app.post("/api/market/coverage")
+def market_coverage(payload: MarketCoverageRequest) -> dict:
+    pool_symbols = {
+        pool["id"]: _active_market_symbols(pool["id"], refresh_if_sparse=False)
+        for pool in MARKET_POOLS
+    }
+    selected_symbols = payload.symbols or []
+    range_symbols = sorted(
+        {
+            normalize_symbol(symbol)
+            for symbols in [*pool_symbols.values(), selected_symbols]
+            for symbol in symbols
+        }
+    )
+    ranges = repository.market_daily_symbol_ranges(range_symbols, payload.start_date, payload.end_date)
+    pool_results = []
+    for pool in MARKET_POOLS:
+        symbols = pool_symbols[pool["id"]]
+        coverage = _coverage_from_symbol_ranges(
+            ranges,
+            symbols,
+            benchmark=payload.benchmark,
+            start_date=payload.start_date,
+            end_date=payload.end_date,
+        )
+        pool_results.append(
+            {
+                **pool,
+                "symbol_count": len(symbols),
+                "coverage": {
+                    key: value
+                    for key, value in coverage.items()
+                    if not key.endswith("_symbols") and key != "ranges"
+                },
+                "missing_symbols": coverage["missing_symbols"][:200],
+                "partial_symbols": coverage["partial_symbols"][:200],
+            }
+        )
+    selected_coverage = _coverage_from_symbol_ranges(
+        ranges,
+        selected_symbols,
+        benchmark=payload.benchmark,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+    )
+    return {
+        "start_date": payload.start_date,
+        "end_date": payload.end_date,
+        "benchmark": payload.benchmark,
+        "pools": pool_results,
+        "selected": {
+            "symbol_count": len({normalize_symbol(symbol) for symbol in selected_symbols}),
+            "coverage": {
+                key: value
+                for key, value in selected_coverage.items()
+                if not key.endswith("_symbols") and key != "ranges"
+            },
+            "missing_symbols": selected_coverage["missing_symbols"][:500],
+            "partial_symbols": selected_coverage["partial_symbols"][:500],
+        },
+    }
+
+
+MARKET_POOLS = [
+    {"id": "all_a", "title": "沪深全A", "helper": "沪深主板 + 创业板 + 科创板，不含北交"},
+    {"id": "all_market", "title": "全市场", "helper": "沪深全A + 北交所"},
+    {"id": "sh_main", "title": "上证主板", "helper": "600/601/603/605 开头"},
+    {"id": "sz_main", "title": "深证主板", "helper": "000/001/002/003 开头"},
+    {"id": "gem", "title": "创业板", "helper": "300/301/302 开头"},
+    {"id": "star", "title": "科创板", "helper": "688/689 开头"},
+    {"id": "bj", "title": "北交所", "helper": "BJ / 8 / 4 / 920 开头"},
+]
+
+
+def _security_parts(record: dict) -> tuple[str, str, str]:
+    symbol = normalize_symbol(record["symbol"])
+    code, suffix = symbol.split(".")
+    exchange = str(record.get("exchange") or suffix).upper()
+    return symbol, code, exchange
+
+
+def _security_belongs_to_pool(record: dict, pool_id: str) -> bool:
+    if record.get("status", "active") == "delisted":
+        return False
+    try:
+        _, code, exchange = _security_parts(record)
+    except (KeyError, ValueError):
+        return False
+    board = str(record.get("board") or "")
+    if pool_id == "all_a":
+        return _is_syncable_sh_sz_stock(record["symbol"], exchange)
+    if pool_id == "all_market":
+        return _is_syncable_sh_sz_stock(record["symbol"], exchange) or exchange == "BJ"
+    if pool_id == "sh":
+        return exchange == "SH"
+    if pool_id == "sz":
+        return exchange == "SZ"
+    if pool_id == "sh_main":
+        return exchange == "SH" and code.startswith(("600", "601", "603", "605"))
+    if pool_id == "sz_main":
+        return exchange == "SZ" and code.startswith(("000", "001", "002", "003"))
+    if pool_id == "gem":
+        return exchange == "SZ" and ("创业" in board or code.startswith(("300", "301", "302")))
+    if pool_id == "star":
+        return exchange == "SH" and ("科创" in board or code.startswith(("688", "689")))
+    if pool_id == "bj":
+        return exchange == "BJ"
+    return False
+
+
+def _active_market_symbols(pool_id: str = "all_a", *, refresh_if_sparse: bool = True) -> list[str]:
+    records = repository.list_securities(include_inactive=True)
+    if refresh_if_sparse and len(records) < 100:
+        records = fetch_akshare_security_master()
+        repository.upsert_securities(records)
+        repository.upsert_industry_history(records)
+    symbols = [
+        normalize_symbol(record["symbol"])
+        for record in records
+        if _security_belongs_to_pool(record, pool_id)
+    ]
+    return sorted(set(symbols))
+
+
 def _is_syncable_sh_sz_stock(symbol: str, exchange: str | None = None) -> bool:
     try:
         normalized = normalize_symbol(symbol)
@@ -428,19 +554,7 @@ def _is_syncable_sh_sz_stock(symbol: str, exchange: str | None = None) -> bool:
 
 
 def _active_sh_sz_symbols() -> list[str]:
-    records = repository.list_securities(include_inactive=True)
-    if len(records) < 100:
-        records = fetch_akshare_security_master()
-        repository.upsert_securities(records)
-        repository.upsert_industry_history(records)
-    symbols = [
-        record["symbol"]
-        for record in records
-        if record.get("exchange") in {"SH", "SZ"}
-        and record.get("status", "active") != "delisted"
-        and _is_syncable_sh_sz_stock(record["symbol"], record.get("exchange"))
-    ]
-    return sorted(set(symbols))
+    return _active_market_symbols("all_a")
 
 
 def _ensure_all_market_sync_coverage(frame, requested_symbols: list[str], benchmark: str) -> int:
@@ -625,6 +739,91 @@ def _market_warehouse_symbol_coverage(
     }
 
 
+def _coverage_from_symbol_ranges(
+    ranges: list[dict],
+    requested_symbols: list[str],
+    *,
+    benchmark: str | None = None,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict:
+    requested = {normalize_symbol(symbol) for symbol in requested_symbols}
+    if benchmark:
+        requested -= {normalize_symbol(benchmark)}
+    start_boundary = _parse_iso_date(start_date)
+    end_boundary = _parse_iso_date(end_date)
+    covered_symbols = []
+    partial_symbols = []
+    ranges_by_symbol = {}
+    for item in ranges:
+        symbol = normalize_symbol(item["symbol"])
+        if symbol not in requested:
+            continue
+        ranges_by_symbol[symbol] = item
+        first_date = _parse_iso_date(item.get("first_date"))
+        last_date = _parse_iso_date(item.get("last_date"))
+        listed_date = _parse_iso_date(item.get("listed_date"))
+        if first_date is None or last_date is None:
+            continue
+        start_ok = True
+        end_ok = True
+        if start_boundary is not None:
+            start_ok = first_date <= start_boundary + timedelta(days=7)
+            if listed_date is not None and listed_date > start_boundary:
+                start_ok = first_date <= listed_date + timedelta(days=7)
+        if end_boundary is not None:
+            end_ok = last_date >= end_boundary - timedelta(days=7)
+        if start_ok and end_ok:
+            covered_symbols.append(symbol)
+        else:
+            partial_symbols.append(symbol)
+    missing_symbols = sorted(requested - set(covered_symbols))
+    covered_symbols = sorted(set(covered_symbols) & requested)
+    partial_symbols = sorted(set(partial_symbols) & requested)
+    expected = len(requested)
+    return {
+        "expected": expected,
+        "covered": len(covered_symbols),
+        "missing": len(missing_symbols),
+        "partial": len(partial_symbols),
+        "coverage": (len(covered_symbols) / expected) if expected else 0,
+        "covered_symbols": covered_symbols,
+        "missing_symbols": missing_symbols,
+        "partial_symbols": partial_symbols,
+        "ranges": {
+            symbol: {
+                "first_date": ranges_by_symbol[symbol].get("first_date"),
+                "last_date": ranges_by_symbol[symbol].get("last_date"),
+                "row_count": ranges_by_symbol[symbol].get("row_count", 0),
+            }
+            for symbol in sorted(set(ranges_by_symbol) & requested)
+        },
+    }
+
+
+def _parse_iso_date(value: str | None) -> date | None:
+    if not value:
+        return None
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def _market_warehouse_range_coverage(
+    symbols: list[str], start_date: str, end_date: str, benchmark: str | None = None
+) -> dict:
+    requested = sorted({normalize_symbol(symbol) for symbol in symbols})
+    ranges = repository.market_daily_symbol_ranges(requested, start_date, end_date)
+    return _coverage_from_symbol_ranges(
+        ranges,
+        requested,
+        benchmark=benchmark,
+        start_date=start_date,
+        end_date=end_date,
+    )
+
+
 def _backfill_market_warehouse_from_datasets() -> dict:
     summary = repository.market_daily_bar_summary()
     if summary["row_count"]:
@@ -782,7 +981,7 @@ async def sync_akshare_dataset(payload: AkshareDatasetRequest) -> dict:
 
 
 def _sync_all_market_batch(payload: AkshareAllDatasetRequest) -> dict:
-    active_symbols = _active_sh_sz_symbols()
+    active_symbols = _active_market_symbols("all_market" if payload.symbols else "all_a")
     if not active_symbols:
         raise ValueError("没有可同步的沪深 A 股证券主数据")
     if payload.symbols:

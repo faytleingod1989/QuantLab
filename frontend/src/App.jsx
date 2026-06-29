@@ -451,11 +451,13 @@ function App() {
   const [syncing, setSyncing] = useState(false);
   const [syncingAll, setSyncingAll] = useState(false);
   const [allMarketSyncTask, setAllMarketSyncTask] = useState(null);
+  const [marketCoverage, setMarketCoverage] = useState(null);
   const [strategyRecord, setStrategyRecord] = useState(null);
   const [savingStrategy, setSavingStrategy] = useState(false);
   const [strategyEditorMode, setStrategyEditorMode] = useState("trading");
   const [booting, setBooting] = useState(true);
   const [comparisons, setComparisons] = useState([]);
+  const selectedSymbolsKey = settings.symbols.join(",");
 
   const refreshComparisons = () => {
     fetch(`${API}/backtests/compare?limit=6`)
@@ -641,23 +643,27 @@ function App() {
     }
   };
 
-  const startAllMarketSync = async () => {
+  const startAllMarketSync = async (symbols = null, label = "全A") => {
     setSyncingAll(true);
-    setNotice("正在启动全A后台补齐任务…");
+    setNotice(`正在启动${label}后台补齐任务…`);
     try {
       const allMarketName = `AkShare 沪深全A ${settings.start_date} 至 ${settings.end_date}`;
+      const targetDatasetName = symbols?.length
+        ? `AkShare 所选股票池 ${settings.start_date} 至 ${settings.end_date}`
+        : allMarketName;
       const baseAllMarketDataset = datasets.find((item) => (
-        item.id === settings.dataset_id && item.source === "akshare_all" && item.name === allMarketName
-      )) || datasets.find((item) => item.source === "akshare_all" && item.name === allMarketName);
+        item.id === settings.dataset_id && item.source === "akshare_all" && item.name === targetDatasetName
+      )) || datasets.find((item) => item.source === "akshare_all" && item.name === targetDatasetName);
       const response = await fetch(`${API}/datasets/akshare/all/tasks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          name: allMarketName,
+          name: targetDatasetName,
           start_date: settings.start_date,
           end_date: settings.end_date,
           benchmark: settings.benchmark,
           base_dataset_id: baseAllMarketDataset?.id || null,
+          symbols,
         }),
       });
       if (!response.ok) throw new Error((await response.json()).detail || "启动全A同步任务失败");
@@ -702,9 +708,9 @@ function App() {
       await startAllMarketSync();
       return;
     }
-    // 选股同步时检查数量上限
-    if (!allMarket && settings.symbols.length > 20) {
-      setNotice(`选股同步最多支持 20 只股票，当前选择了 ${settings.symbols.length} 只。请先缩小股票池，或使用「同步沪深全A」。`);
+    // 大股票池走后台任务：后端会先查本地仓库，只补缺口。
+    if (settings.symbols.length > 20) {
+      await startAllMarketSync(settings.symbols, "所选股票池");
       return;
     }
     const abortController = null;
@@ -866,6 +872,26 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!securities.length || drawer !== "data") return;
+    const controller = new AbortController();
+    fetch(`${API}/market/coverage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        start_date: settings.start_date,
+        end_date: settings.end_date,
+        benchmark: settings.benchmark,
+        symbols: settings.symbols,
+      }),
+    })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("market coverage failed")))
+      .then(setMarketCoverage)
+      .catch((error) => logIgnoredError("刷新本地行情覆盖失败", error));
+    return () => controller.abort();
+  }, [drawer, securities.length, settings.start_date, settings.end_date, settings.benchmark, selectedSymbolsKey]);
+
+  useEffect(() => {
     let cancelled = false;
     const pollAllMarketTask = async () => {
       try {
@@ -1020,6 +1046,7 @@ function App() {
           onRetryFailedAll={retryFailedAllMarketSync}
           syncingAll={syncingAll}
           allMarketSyncTask={allMarketSyncTask}
+          marketCoverage={marketCoverage}
           onSelectDataset={selectDataset}
           onDeleteDataset={deleteDataset}
         />
@@ -1121,6 +1148,7 @@ function App() {
           syncing={syncing}
           syncingAll={syncingAll}
           allMarketSyncTask={allMarketSyncTask}
+          marketCoverage={marketCoverage}
           onSelectDataset={selectDataset}
           onDeleteDataset={deleteDataset}
           close={() => setDrawer(null)}

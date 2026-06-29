@@ -232,6 +232,8 @@ def test_all_market_sync_symbol_pool_uses_active_sh_sz_only(monkeypatch):
     monkeypatch.setattr(app_module, "fetch_akshare_security_master", lambda: records)
 
     assert app_module._active_sh_sz_symbols() == ["300750.SZ", "600519.SH"]
+    assert app_module._active_market_symbols("all_market") == ["300750.SZ", "600519.SH", "920000.BJ"]
+    assert app_module._active_market_symbols("bj") == ["920000.BJ"]
     assert fake_repository.synced_records == records
 
 
@@ -328,6 +330,40 @@ def test_market_warehouse_coverage_requires_requested_date_span():
 
     assert short_span["covered"] == 1
     assert long_span["covered"] == 0
+
+
+def test_repository_summarizes_market_daily_symbol_ranges(tmp_path):
+    from backend import app as app_module
+
+    repository = BacktestRepository(tmp_path / "quantlab.db")
+    repository.upsert_securities(
+        [
+            {
+                "symbol": "600519.SH",
+                "name": "贵州茅台",
+                "exchange": "SH",
+                "board": "沪市主板",
+                "listed_date": "2001-08-27",
+                "delisted_date": None,
+                "status": "active",
+                "source": "akshare_master",
+            }
+        ]
+    )
+    frame = prepare_market_frame(sample_daily("600519.SH", "2024-01-02", "2024-01-10"))
+    repository.upsert_market_daily_bars(app_module._warehouse_records_from_frame(frame, "test"))
+
+    ranges = repository.market_daily_symbol_ranges(["600519.SH"], "2024-01-01", "2024-01-31")
+
+    assert ranges == [
+        {
+            "symbol": "600519.SH",
+            "first_date": "2024-01-02",
+            "last_date": "2024-01-10",
+            "listed_date": "2001-08-27",
+            "row_count": len(frame),
+        }
+    ]
 
 
 def test_real_security_master_overrides_demo_seed_listing_date(tmp_path):
