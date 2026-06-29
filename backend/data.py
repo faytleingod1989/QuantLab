@@ -345,7 +345,7 @@ def sample_daily(symbol: str, start: str = "2017-01-01", end: str = "2025-12-31"
 
 
 def load_csv(path: str | Path) -> pd.DataFrame:
-    return prepare_market_frame(pd.read_csv(path))
+    return prepare_market_frame(pd.read_csv(path, low_memory=False))
 
 
 def load_csv_text(content: str) -> pd.DataFrame:
@@ -709,7 +709,7 @@ def extract_security_daily_status(
     return records
 
 
-def load_dataset_view(
+def _load_dataset_view_legacy(
     path: str | Path, symbols: list[str], start_date: str, end_date: str, benchmark: str
 ) -> tuple[dict[str, pd.DataFrame], pd.DataFrame | None]:
     """Create a date- and symbol-scoped view over one immutable dataset snapshot."""
@@ -728,6 +728,38 @@ def load_dataset_view(
     benchmark_symbol = normalize_symbol(benchmark)
     benchmark_frame = scoped[scoped["symbol"] == benchmark_symbol].copy().reset_index(drop=True)
     return data, benchmark_frame if not benchmark_frame.empty else None
+
+
+def load_dataset_view(
+    path: str | Path, symbols: list[str], start_date: str, end_date: str, benchmark: str
+) -> tuple[dict[str, pd.DataFrame], pd.DataFrame | None]:
+    """Create a scoped dataset view without repeatedly scanning large snapshots."""
+    frame = load_csv(path)
+    requested = [normalize_symbol(symbol) for symbol in symbols]
+    requested_set = set(requested)
+    benchmark_symbol = normalize_symbol(benchmark)
+    start, end = pd.Timestamp(start_date), pd.Timestamp(end_date)
+
+    scoped = frame[
+        (frame["trade_date"] >= start)
+        & (frame["trade_date"] <= end)
+        & frame["symbol"].isin(requested_set | {benchmark_symbol})
+    ].copy()
+    if scoped.empty:
+        raise ValueError("数据集在所选日期内没有可用行情")
+
+    grouped = {
+        symbol: group.sort_values("trade_date").reset_index(drop=True)
+        for symbol, group in scoped.groupby("symbol", sort=False)
+    }
+    data = {symbol: grouped[symbol].copy() for symbol in requested if symbol in grouped}
+    if not data:
+        raise ValueError(f"数据集在所选日期内没有可用标的: {', '.join(requested[:20])}")
+
+    benchmark_frame = grouped.get(benchmark_symbol)
+    if benchmark_frame is not None:
+        benchmark_frame = benchmark_frame.copy().reset_index(drop=True)
+    return data, benchmark_frame if benchmark_frame is not None and not benchmark_frame.empty else None
 
 
 def fetch_trading_calendar(start_date: str, end_date: str, client=None) -> pd.DataFrame:

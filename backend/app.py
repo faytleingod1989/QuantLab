@@ -25,7 +25,6 @@ from .data import (
     infer_board,
     load_csv,
     load_csv_text,
-    load_dataset_view,
     load_industry_history_csv_text,
     normalize_symbol,
     prepare_market_frame,
@@ -300,13 +299,6 @@ def create_backtest(request: BacktestRequest) -> dict:
         if not dataset:
             raise HTTPException(status_code=400, detail="数据集不存在")
         request.dataset_fingerprint = dataset["fingerprint"]
-        try:
-            load_dataset_view(
-                dataset["path"], request.symbols, request.start_date,
-                request.end_date, request.benchmark,
-            )
-        except (OSError, ValueError) as error:
-            raise HTTPException(status_code=400, detail=str(error)) from error
     else:
         _validate_demo_symbols(request)
     try:

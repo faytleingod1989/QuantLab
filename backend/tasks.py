@@ -51,22 +51,26 @@ class BacktestTaskManager:
     def _execute(self, run_id: str, request: BacktestRequest, cancel_event: Event) -> None:
         self.repository.update_run(run_id, status="running", started_at=utc_now(), progress=0.01)
         logger.info("backtest_started task_id=%s", run_id)
-        last_progress = 0.0
+        last_progress = 0.01
 
         def cancelled() -> bool:
             return cancel_event.is_set()
 
-        def progress(value: float) -> None:
+        def publish_progress(value: float) -> None:
             nonlocal last_progress
             normalized = round(min(max(value, 0.01), 0.99), 4)
-            if normalized - last_progress >= 0.025:
+            if normalized - last_progress >= 0.01 or normalized >= 0.99:
                 self.repository.update_run(run_id, progress=normalized)
                 last_progress = normalized
+
+        def progress(value: float) -> None:
+            publish_progress(0.10 + min(max(value, 0.0), 1.0) * 0.89)
 
         try:
             if cancelled():
                 raise BacktestCancelled()
             if request.dataset_id:
+                publish_progress(0.03)
                 dataset = self.repository.get_dataset(request.dataset_id)
                 if not dataset:
                     raise ValueError("数据集不存在")
@@ -75,11 +79,14 @@ class BacktestTaskManager:
                     dataset["path"], request.symbols, request.start_date,
                     request.end_date, request.benchmark,
                 )
+                publish_progress(0.08)
                 benchmark_is_demo = False
                 data_source = dataset.get("source", "csv")
             else:
+                publish_progress(0.03)
                 data = {symbol: sample_daily(symbol) for symbol in request.symbols}
                 benchmark = sample_daily(request.benchmark)
+                publish_progress(0.08)
                 benchmark_is_demo = True
                 data_source = "demo"
                 quality_checks = []

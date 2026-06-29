@@ -315,7 +315,14 @@ def run_backtest(
     cancel_check=None,
 ) -> dict:
     prepared: dict[str, pd.DataFrame] = {}
-    for symbol, frame in data.items():
+    total_symbols = max(1, len(data))
+    for symbol_index, (symbol, frame) in enumerate(data.items()):
+        if cancel_check and cancel_check():
+            raise BacktestCancelled()
+        if progress_callback and (
+            symbol_index == 0 or symbol_index % max(1, total_symbols // 50) == 0
+        ):
+            progress_callback(0.02 + 0.18 * (symbol_index / total_symbols))
         current = frame.copy().sort_values("trade_date")
         current = current[
             (current["trade_date"] >= pd.Timestamp(request.start_date))
@@ -365,7 +372,7 @@ def run_backtest(
         if progress_callback and (
             date_index == 0 or date_index % max(1, len(all_dates) // 100) == 0
         ):
-            progress_callback(date_index / len(all_dates))
+            progress_callback(0.20 + 0.80 * (date_index / len(all_dates)))
         for position in positions.values():
             position.available += position.unsettled
             position.unsettled = 0
