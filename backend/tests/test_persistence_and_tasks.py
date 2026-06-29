@@ -213,6 +213,7 @@ def test_all_market_sync_symbol_pool_uses_active_sh_sz_only(monkeypatch):
             "board": "创业板",
         },
         {"symbol": "920000.BJ", "exchange": "BJ", "status": "active"},
+        {"symbol": "000300.SH", "exchange": "SH", "status": "active"},
         {"symbol": "600001.SH", "exchange": "SH", "status": "delisted"},
     ]
 
@@ -259,7 +260,7 @@ def test_all_market_sync_rejects_low_coverage_snapshot():
 def test_all_market_coverage_excludes_benchmark_and_merge_deduplicates():
     from backend import app as app_module
 
-    requested = ["600000.SH", "600001.SH", "600002.SH"]
+    requested = ["600000.SH", "600001.SH", "600002.SH", "000300.SH"]
     first = pd.concat(
         [
             sample_daily("600000.SH", "2024-01-01", "2024-01-10"),

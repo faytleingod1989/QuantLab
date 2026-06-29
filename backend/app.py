@@ -413,6 +413,20 @@ def list_datasets() -> list[dict]:
     return repository.list_datasets()
 
 
+def _is_syncable_sh_sz_stock(symbol: str, exchange: str | None = None) -> bool:
+    try:
+        normalized = normalize_symbol(symbol)
+    except ValueError:
+        return False
+    code, suffix = normalized.split(".")
+    market = exchange or suffix
+    if market == "SH":
+        return code.startswith(("600", "601", "603", "605", "688", "689"))
+    if market == "SZ":
+        return code.startswith(("000", "001", "002", "003", "300", "301", "302"))
+    return False
+
+
 def _active_sh_sz_symbols() -> list[str]:
     records = repository.list_securities(include_inactive=True)
     if len(records) < 100:
@@ -424,13 +438,14 @@ def _active_sh_sz_symbols() -> list[str]:
         for record in records
         if record.get("exchange") in {"SH", "SZ"}
         and record.get("status", "active") != "delisted"
+        and _is_syncable_sh_sz_stock(record["symbol"], record.get("exchange"))
     ]
     return sorted(set(symbols))
 
 
 def _ensure_all_market_sync_coverage(frame, requested_symbols: list[str], benchmark: str) -> int:
-    requested = {normalize_symbol(symbol) for symbol in requested_symbols}
     benchmark_symbol = normalize_symbol(benchmark)
+    requested = {normalize_symbol(symbol) for symbol in requested_symbols} - {benchmark_symbol}
     synced = {normalize_symbol(symbol) for symbol in frame["symbol"].dropna().unique()}
     actual = len((synced - {benchmark_symbol}) & requested)
     expected = len(requested)
@@ -447,8 +462,8 @@ def _ensure_all_market_sync_coverage(frame, requested_symbols: list[str], benchm
 
 
 def _all_market_coverage(frame, requested_symbols: list[str], benchmark: str) -> dict:
-    requested = {normalize_symbol(symbol) for symbol in requested_symbols}
     benchmark_symbol = normalize_symbol(benchmark)
+    requested = {normalize_symbol(symbol) for symbol in requested_symbols} - {benchmark_symbol}
     synced = {normalize_symbol(symbol) for symbol in frame["symbol"].dropna().unique()}
     covered = sorted((synced - {benchmark_symbol}) & requested)
     expected = len(requested)
