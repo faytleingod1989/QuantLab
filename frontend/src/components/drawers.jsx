@@ -719,11 +719,13 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
 }
 
 const stockPoolOptions = [
-  { id: "all_a", title: "沪深全A", helper: "上证 + 深证，排除北交所" },
-  { id: "sh", title: "上证全部", helper: "上交所全部股票" },
-  { id: "sz", title: "深证全部", helper: "深交所全部股票" },
-  { id: "gem", title: "创业板", helper: "300/301 开头" },
-  { id: "star", title: "科创板", helper: "688 开头" },
+  { id: "all_a", title: "沪深全A", helper: "沪深主板 + 创业板 + 科创板，不含北交" },
+  { id: "all_market", title: "全市场", helper: "沪深全A + 北交所" },
+  { id: "sh_main", title: "上证主板", helper: "600/601/603/605 开头" },
+  { id: "sz_main", title: "深证主板", helper: "000/001/002/003 开头" },
+  { id: "gem", title: "创业板", helper: "300/301/302 开头" },
+  { id: "star", title: "科创板", helper: "688/689 开头" },
+  { id: "bj", title: "北交所", helper: "BJ / 8 / 4 / 920 开头" },
 ];
 
 function getSecurityParts(item) {
@@ -753,17 +755,29 @@ export function securityBelongsToPool(item, poolId) {
   if (poolId === "all_a") {
     return exchange === "SH" || exchange === "SZ";
   }
+  if (poolId === "all_market") {
+    return exchange === "SH" || exchange === "SZ" || exchange === "BJ";
+  }
   if (poolId === "sh") {
     return exchange === "SH";
   }
   if (poolId === "sz") {
     return exchange === "SZ";
   }
+  if (poolId === "sh_main") {
+    return exchange === "SH" && !code.startsWith("688") && !code.startsWith("689");
+  }
+  if (poolId === "sz_main") {
+    return exchange === "SZ" && !code.startsWith("300") && !code.startsWith("301") && !code.startsWith("302");
+  }
   if (poolId === "gem") {
-    return exchange === "SZ" && (board.includes("创业") || code.startsWith("300") || code.startsWith("301"));
+    return exchange === "SZ" && (board.includes("创业") || code.startsWith("300") || code.startsWith("301") || code.startsWith("302"));
   }
   if (poolId === "star") {
-    return exchange === "SH" && (board.includes("科创") || code.startsWith("688"));
+    return exchange === "SH" && (board.includes("科创") || code.startsWith("688") || code.startsWith("689"));
+  }
+  if (poolId === "bj") {
+    return exchange === "BJ";
   }
   return false;
 }
@@ -786,6 +800,14 @@ export function symbolsForPool(securities, poolId, benchmark = null) {
     securities.filter((item) => securityBelongsToPool(item, poolId)),
     benchmark
   );
+}
+
+export function poolSelectionState(selectedSymbols, poolSymbols) {
+  if (!poolSymbols.length) return "empty";
+  const selected = new Set(selectedSymbols);
+  const selectedCount = poolSymbols.filter((symbol) => selected.has(symbol)).length;
+  if (selectedCount === 0) return "none";
+  return selectedCount === poolSymbols.length ? "selected" : "partial";
 }
 
 export function DataDrawer({
@@ -840,21 +862,48 @@ export function DataDrawer({
     allMarketPoolCount &&
     Math.max(0, Number(dataset.symbol_count || 0) - 1) < allMarketPoolCount
   ));
-  const activePoolId = useMemo(() => {
-    const selected = new Set(settings.symbols);
-    return stockPools.find((pool) => (
-      pool.symbols.length > 0 &&
-      pool.symbols.length === selected.size &&
-      pool.symbols.every((symbol) => selected.has(symbol))
-    ))?.id;
-  }, [settings.symbols, stockPools]);
+  const poolStates = useMemo(
+    () =>
+      Object.fromEntries(
+        stockPools.map((pool) => [
+          pool.id,
+          poolSelectionState(settings.symbols, pool.symbols),
+        ])
+      ),
+    [settings.symbols, stockPools]
+  );
   const applySymbols = (symbols) =>
     setSettings((current) => ({
       ...current,
       symbols,
     }));
-  const selectPool = (pool) => applySymbols(pool.symbols);
-  const selectFiltered = () => applySymbols(filteredSymbols);
+  const togglePool = (pool) =>
+    setSettings((current) => {
+      const currentSymbols = new Set(current.symbols);
+      const poolFullySelected = pool.symbols.length > 0 && pool.symbols.every((symbol) => currentSymbols.has(symbol));
+      if (poolFullySelected) {
+        for (const symbol of pool.symbols) currentSymbols.delete(symbol);
+      } else {
+        for (const symbol of pool.symbols) currentSymbols.add(symbol);
+      }
+      return {
+        ...current,
+        symbols: securities
+          .map((item) => item.symbol)
+          .filter((symbol) => currentSymbols.has(symbol) && symbol !== current.benchmark),
+      };
+    });
+  const selectFiltered = () =>
+    setSettings((current) => {
+      const currentSymbols = new Set(current.symbols);
+      for (const symbol of filteredSymbols) currentSymbols.add(symbol);
+      return {
+        ...current,
+        symbols: securities
+          .map((item) => item.symbol)
+          .filter((symbol) => currentSymbols.has(symbol) && symbol !== current.benchmark),
+      };
+    });
   const clearSelection = () => applySymbols([]);
   const failedSymbols = allMarketSyncTask?.failed_symbols || allMarketSyncTask?.last_failed_symbols || [];
   const skippedSymbols = allMarketSyncTask?.skipped_symbols || [];
@@ -948,12 +997,15 @@ export function DataDrawer({
                 {stockPools.map((pool) => (
                   <button
                     key={pool.id}
-                    className={activePoolId === pool.id ? "selected" : ""}
-                    onClick={() => selectPool(pool)}
+                    data-testid={`stock-pool-${pool.id}`}
+                    className={poolStates[pool.id] === "selected" ? "selected" : poolStates[pool.id] === "partial" ? "partial" : ""}
+                    onClick={() => togglePool(pool)}
                     disabled={!pool.symbols.length}
                   >
                     <b>{pool.title}</b>
-                    <span>{pool.symbols.length} 只 · {pool.helper}</span>
+                    <span>
+                      {settings.symbols.filter((symbol) => pool.symbols.includes(symbol)).length}/{pool.symbols.length} 只 · {pool.helper}
+                    </span>
                   </button>
                 ))}
                 <button className="utility" onClick={selectFiltered} disabled={!filteredSymbols.length}>

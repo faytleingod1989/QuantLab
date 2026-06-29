@@ -4,6 +4,7 @@ import { strategyTemplates } from "../appConfig.jsx";
 import {
   createStrategyExportPayload,
   normalizeImportedStrategy,
+  poolSelectionState,
   securityBelongsToPool,
   symbolsForPool,
   updateRuleConditionValue,
@@ -137,9 +138,11 @@ describe("stock pool helpers", () => {
   const securities = [
     { symbol: "600000.SH", name: "浦发银行", exchange: "SH", board: "沪主板" },
     { symbol: "688001.SH", name: "华兴源创", exchange: "SH", board: "科创板" },
+    { symbol: "689009.SH", name: "九号公司", exchange: "SH", board: "" },
     { symbol: "000001.SZ", name: "平安银行", exchange: "SZ", board: "深主板" },
     { symbol: "300750.SZ", name: "宁德时代", exchange: "SZ", board: "创业板" },
     { symbol: "301001.SZ", name: "凯淳股份", exchange: "SZ", board: "" },
+    { symbol: "302132.SZ", name: "中航成飞", exchange: "SZ", board: "" },
     { symbol: "600001.SH", name: "退市示例", exchange: "SH", board: "沪市主板", status: "delisted" },
     { symbol: "830799.BJ", name: "艾融软件", exchange: "BJ", board: "北交所" },
   ];
@@ -148,17 +151,23 @@ describe("stock pool helpers", () => {
     expect(symbolsForPool(securities, "all_a")).toEqual([
       "600000.SH",
       "688001.SH",
+      "689009.SH",
       "000001.SZ",
       "300750.SZ",
       "301001.SZ",
+      "302132.SZ",
     ]);
   });
 
   it("selects exchange and board pools", () => {
-    expect(symbolsForPool(securities, "sh")).toEqual(["600000.SH", "688001.SH"]);
-    expect(symbolsForPool(securities, "sz")).toEqual(["000001.SZ", "300750.SZ", "301001.SZ"]);
-    expect(symbolsForPool(securities, "gem")).toEqual(["300750.SZ", "301001.SZ"]);
-    expect(symbolsForPool(securities, "star")).toEqual(["688001.SH"]);
+    expect(symbolsForPool(securities, "sh")).toEqual(["600000.SH", "688001.SH", "689009.SH"]);
+    expect(symbolsForPool(securities, "sz")).toEqual(["000001.SZ", "300750.SZ", "301001.SZ", "302132.SZ"]);
+    expect(symbolsForPool(securities, "sh_main")).toEqual(["600000.SH"]);
+    expect(symbolsForPool(securities, "sz_main")).toEqual(["000001.SZ"]);
+    expect(symbolsForPool(securities, "gem")).toEqual(["300750.SZ", "301001.SZ", "302132.SZ"]);
+    expect(symbolsForPool(securities, "star")).toEqual(["688001.SH", "689009.SH"]);
+    expect(symbolsForPool(securities, "bj")).toEqual(["830799.BJ"]);
+    expect(symbolsForPool(securities, "all_market")).toContain("830799.BJ");
   });
 
   it("supports board inference from symbol suffix and excludes benchmark", () => {
@@ -166,5 +175,12 @@ describe("stock pool helpers", () => {
     expect(securityBelongsToPool({ symbol: "688123", exchange: "SSE", board: "" }, "star")).toBe(true);
     expect(securityBelongsToPool({ symbol: "300123", exchange: "SZSE", board: "" }, "gem")).toBe(true);
     expect(symbolsForPool(securities, "all_a", "000001.SZ")).not.toContain("000001.SZ");
+  });
+
+  it("reports multi-select pool state", () => {
+    expect(poolSelectionState([], ["600000.SH"])).toBe("none");
+    expect(poolSelectionState(["600000.SH"], ["600000.SH"])).toBe("selected");
+    expect(poolSelectionState(["600000.SH"], ["600000.SH", "688001.SH"])).toBe("partial");
+    expect(poolSelectionState(["600000.SH"], [])).toBe("empty");
   });
 });
