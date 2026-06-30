@@ -342,7 +342,11 @@ def test_market_warehouse_coverage_requires_requested_date_span():
     )
 
     assert short_span["covered"] == 1
-    assert long_span["covered"] == 0
+    assert short_span["missing"] == 0
+    assert short_span["partial"] == 0
+    assert long_span["covered"] == 1
+    assert long_span["missing"] == 0
+    assert long_span["partial"] == 1
 
 
 def test_repository_summarizes_market_daily_symbol_ranges(tmp_path):
@@ -377,6 +381,35 @@ def test_repository_summarizes_market_daily_symbol_ranges(tmp_path):
             "row_count": len(frame),
         }
     ]
+
+
+def test_backtest_task_loads_local_warehouse_without_dataset(tmp_path):
+    from backend import app as app_module
+    from backend.tasks import _load_warehouse_view
+
+    repository = BacktestRepository(tmp_path / "quantlab.db")
+    frame = prepare_market_frame(
+        pd.concat(
+            [
+                sample_daily("600519.SH", "2024-01-02", "2024-01-10"),
+                sample_daily("000300.SH", "2024-01-02", "2024-01-10"),
+            ],
+            ignore_index=True,
+        )
+    )
+    repository.upsert_market_daily_bars(app_module._warehouse_records_from_frame(frame, "test"))
+
+    data, benchmark = _load_warehouse_view(
+        repository,
+        ["600519.SH"],
+        "2024-01-02",
+        "2024-01-10",
+        "000300.SH",
+    )
+
+    assert list(data) == ["600519.SH"]
+    assert not data["600519.SH"].empty
+    assert not benchmark.empty
 
 
 def test_real_security_master_overrides_demo_seed_listing_date(tmp_path):
@@ -571,7 +604,19 @@ def test_security_lifecycle_validation_allows_partial_listing_overlap(tmp_path):
 
 
 def test_async_task_completes_and_persists_result(tmp_path):
+    from backend import app as app_module
+
     repository = BacktestRepository(tmp_path / "quantlab.db")
+    warehouse_frame = prepare_market_frame(
+        pd.concat(
+            [
+                sample_daily("600519.SH", "2020-01-01", "2020-12-31"),
+                sample_daily("000300.SH", "2020-01-01", "2020-12-31"),
+            ],
+            ignore_index=True,
+        )
+    )
+    repository.upsert_market_daily_bars(app_module._warehouse_records_from_frame(warehouse_frame, "test"))
     manager = BacktestTaskManager(repository, max_workers=1)
     request = BacktestRequest(
         symbols=["600519.SH"], start_date="2020-01-01", end_date="2020-12-31"

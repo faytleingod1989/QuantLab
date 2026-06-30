@@ -9,13 +9,43 @@ from time import sleep
 from typing import Any, Callable
 from uuid import uuid4
 
-from .data import load_dataset_view, sample_daily
+import pandas as pd
+
+from .data import load_dataset_view, prepare_market_frame
 from .engine import BacktestCancelled, run_backtest
 from .models import BacktestRequest
 from .repository import BacktestRepository, utc_now
 
 
 logger = logging.getLogger("quantlab.tasks")
+
+
+def _load_warehouse_view(
+    repository: BacktestRepository,
+    symbols: list[str],
+    start_date: str,
+    end_date: str,
+    benchmark: str,
+) -> tuple[dict[str, pd.DataFrame], pd.DataFrame]:
+    requested = sorted({*symbols, benchmark})
+    records = repository.list_market_daily_bars(requested, start_date, end_date)
+    if not records:
+        raise ValueError("本地日线仓库没有当前股票池的行情，请先在数据中心补齐对应时间段")
+    frame = prepare_market_frame(pd.DataFrame(records))
+    grouped = {
+        symbol: group.sort_values("trade_date").reset_index(drop=True)
+        for symbol, group in frame.groupby("symbol", sort=False)
+    }
+    benchmark_frame = grouped.get(benchmark)
+    if benchmark_frame is None or benchmark_frame.empty:
+        raise ValueError(f"本地日线仓库缺少基准 {benchmark} 的行情，请先补齐数据")
+    data = {symbol: grouped[symbol] for symbol in symbols if symbol in grouped and symbol != benchmark}
+    missing = [symbol for symbol in symbols if symbol != benchmark and symbol not in data]
+    if missing:
+        sample = "、".join(missing[:10])
+        suffix = "…" if len(missing) > 10 else ""
+        raise ValueError(f"本地日线仓库缺少 {len(missing)} 只股票行情：{sample}{suffix}，请先补齐数据")
+    return data, benchmark_frame
 
 
 class BacktestTaskManager:
@@ -84,11 +114,16 @@ class BacktestTaskManager:
                 data_source = dataset.get("source", "csv")
             else:
                 publish_progress(0.03)
-                data = {symbol: sample_daily(symbol) for symbol in request.symbols}
-                benchmark = sample_daily(request.benchmark)
+                data, benchmark = _load_warehouse_view(
+                    self.repository,
+                    request.symbols,
+                    request.start_date,
+                    request.end_date,
+                    request.benchmark,
+                )
                 publish_progress(0.08)
-                benchmark_is_demo = True
-                data_source = "demo"
+                benchmark_is_demo = False
+                data_source = "local_warehouse"
                 quality_checks = []
             result = run_backtest(
                 data,

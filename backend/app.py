@@ -301,8 +301,6 @@ def create_backtest(request: BacktestRequest) -> dict:
         if not dataset:
             raise HTTPException(status_code=400, detail="数据集不存在")
         request.dataset_fingerprint = dataset["fingerprint"]
-    else:
-        _validate_demo_symbols(request)
     try:
         lifecycle_symbols = [normalize_symbol(symbol) for symbol in request.symbols]
     except ValueError as error:
@@ -576,18 +574,53 @@ def _ensure_all_market_sync_coverage(frame, requested_symbols: list[str], benchm
     return actual
 
 
-def _all_market_coverage(frame, requested_symbols: list[str], benchmark: str) -> dict:
+def _all_market_coverage(
+    frame,
+    requested_symbols: list[str],
+    benchmark: str,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> dict:
     benchmark_symbol = normalize_symbol(benchmark)
     requested = {normalize_symbol(symbol) for symbol in requested_symbols} - {benchmark_symbol}
-    synced = {normalize_symbol(symbol) for symbol in frame["symbol"].dropna().unique()}
+    current = frame.copy()
+    current["symbol"] = current["symbol"].map(normalize_symbol)
+    current["trade_date"] = pd.to_datetime(current["trade_date"])
+    synced = set()
+    partial = set()
+    start_boundary = pd.to_datetime(start_date, errors="coerce") if start_date else None
+    end_boundary = pd.to_datetime(end_date, errors="coerce") if end_date else None
+    for symbol, group in current.groupby("symbol", sort=False):
+        normalized = normalize_symbol(symbol)
+        if normalized not in requested:
+            continue
+        first_date = group["trade_date"].min()
+        last_date = group["trade_date"].max()
+        listed_date = pd.to_datetime(group.get("listed_date"), errors="coerce").dropna().min() if "listed_date" in group else pd.NaT
+        start_ok = True
+        end_ok = True
+        if start_boundary is not None and pd.notna(start_boundary):
+            start_ok = first_date <= start_boundary + pd.Timedelta(days=7)
+            if pd.notna(listed_date) and listed_date > start_boundary:
+                start_ok = first_date <= listed_date + pd.Timedelta(days=7)
+        if end_boundary is not None and pd.notna(end_boundary):
+            end_ok = last_date >= end_boundary - pd.Timedelta(days=7)
+        synced.add(normalized)
+        if not (start_ok and end_ok):
+            partial.add(normalized)
     covered = sorted((synced - {benchmark_symbol}) & requested)
+    missing_symbols = sorted(requested - set(covered))
+    partial_symbols = sorted((partial - {benchmark_symbol}) & requested)
     expected = len(requested)
     return {
         "expected": expected,
         "covered": len(covered),
-        "missing": max(0, expected - len(covered)),
+        "missing": len(missing_symbols),
+        "partial": len(partial_symbols),
         "coverage": (len(covered) / expected) if expected else 0,
         "covered_symbols": covered,
+        "missing_symbols": missing_symbols,
+        "partial_symbols": partial_symbols,
     }
 
 
@@ -701,8 +734,11 @@ def _market_warehouse_symbol_coverage(
             "expected": len(requested),
             "covered": 0,
             "missing": len(requested),
+            "partial": 0,
             "coverage": 0,
             "covered_symbols": [],
+            "missing_symbols": sorted(requested),
+            "partial_symbols": [],
         }
     requested = {normalize_symbol(symbol) for symbol in requested_symbols}
     current = frame.copy()
@@ -710,6 +746,7 @@ def _market_warehouse_symbol_coverage(
     start_boundary = pd.to_datetime(start_date, errors="coerce") if start_date else None
     end_boundary = pd.to_datetime(end_date, errors="coerce") if end_date else None
     synced = set()
+    partial = set()
     for symbol, group in current.groupby("symbol", sort=False):
         normalized = normalize_symbol(symbol)
         if normalized not in requested:
@@ -725,18 +762,24 @@ def _market_warehouse_symbol_coverage(
                 start_ok = first_date <= listed_date + pd.Timedelta(days=7)
         if end_boundary is not None and pd.notna(end_boundary):
             end_ok = last_date >= end_boundary - pd.Timedelta(days=7)
-        if start_ok and end_ok:
-            synced.add(normalized)
+        synced.add(normalized)
+        if not (start_ok and end_ok):
+            partial.add(normalized)
     if benchmark:
         synced -= {normalize_symbol(benchmark)}
+        partial -= {normalize_symbol(benchmark)}
     covered = sorted(synced & requested)
+    missing_symbols = sorted(requested - synced)
     expected = len(requested)
     return {
         "expected": expected,
         "covered": len(covered),
-        "missing": max(0, expected - len(covered)),
+        "missing": len(missing_symbols),
+        "partial": len(sorted(partial & requested)),
         "coverage": (len(covered) / expected) if expected else 0,
         "covered_symbols": covered,
+        "missing_symbols": missing_symbols,
+        "partial_symbols": sorted(partial & requested),
     }
 
 
@@ -753,7 +796,6 @@ def _coverage_from_symbol_ranges(
         requested -= {normalize_symbol(benchmark)}
     start_boundary = _parse_iso_date(start_date)
     end_boundary = _parse_iso_date(end_date)
-    covered_symbols = []
     partial_symbols = []
     ranges_by_symbol = {}
     for item in ranges:
@@ -774,12 +816,10 @@ def _coverage_from_symbol_ranges(
                 start_ok = first_date <= listed_date + timedelta(days=7)
         if end_boundary is not None:
             end_ok = last_date >= end_boundary - timedelta(days=7)
-        if start_ok and end_ok:
-            covered_symbols.append(symbol)
-        else:
+        if not (start_ok and end_ok):
             partial_symbols.append(symbol)
-    missing_symbols = sorted(requested - set(covered_symbols))
-    covered_symbols = sorted(set(covered_symbols) & requested)
+    covered_symbols = sorted(set(ranges_by_symbol) & requested)
+    missing_symbols = sorted(requested - set(ranges_by_symbol))
     partial_symbols = sorted(set(partial_symbols) & requested)
     expected = len(requested)
     return {
@@ -1001,6 +1041,56 @@ def _sync_all_market_batch(payload: AkshareAllDatasetRequest) -> dict:
         symbols = [symbol for symbol in symbols if normalize_symbol(symbol) not in skipped_symbols]
         if not symbols:
             raise ValueError("剩余股票均已达到失败阈值，已跳过")
+    range_symbols = sorted({*symbols, normalize_symbol(payload.benchmark)})
+    warehouse_ranges = repository.market_daily_symbol_ranges(
+        range_symbols, payload.start_date, payload.end_date
+    )
+    range_coverage = _coverage_from_symbol_ranges(
+        warehouse_ranges,
+        symbols,
+        benchmark=payload.benchmark,
+        start_date=payload.start_date,
+        end_date=payload.end_date,
+    )
+    if range_coverage["missing"] == 0 and range_coverage["expected"]:
+        row_count = sum(int(item.get("row_count") or 0) for item in warehouse_ranges)
+        result = {
+            "id": None,
+            "name": payload.name,
+            "source": "local_warehouse",
+            "symbol_count": len(symbols),
+            "row_count": row_count,
+            "start_date": payload.start_date,
+            "end_date": payload.end_date,
+            "duplicate": False,
+            "summary": {
+                "symbol_count": len(symbols),
+                "row_count": row_count,
+                "start_date": payload.start_date,
+                "end_date": payload.end_date,
+            },
+            "quality_checks": [],
+            "_coverage": {
+                key: value
+                for key, value in range_coverage.items()
+                if key not in {"covered_symbols", "ranges"}
+            },
+            "_warehouse": {
+                "covered_before_fetch": range_coverage["covered"],
+                "fetched_symbols": 0,
+                "reused": True,
+            },
+            "_providers": [],
+            "_batch_symbols": [],
+            "_batch_covered_symbols": [],
+            "_failed_symbols": [],
+            "_skipped_symbols": sorted(skipped_symbols),
+            "_sync_note": (
+                f"本地日线仓库已覆盖 {range_coverage['covered']} / "
+                f"{range_coverage['expected']} 只，无需补齐"
+            ),
+        }
+        return result
     existing_records = _all_market_base_datasets(payload.name, payload.base_dataset_id)
     existing_record = existing_records[0] if existing_records else None
     duplicate_records = existing_records[1:]
@@ -1013,7 +1103,9 @@ def _sync_all_market_batch(payload: AkshareAllDatasetRequest) -> dict:
         symbol
         for symbol in symbols
         if normalize_symbol(symbol) not in set(
-            _all_market_coverage(existing_frame, symbols, payload.benchmark).get("covered_symbols", [])
+            _all_market_coverage(
+                existing_frame, symbols, payload.benchmark, payload.start_date, payload.end_date
+            ).get("covered_symbols", [])
         )
     ]
     warehouse_frame = _load_market_warehouse(
@@ -1024,17 +1116,36 @@ def _sync_all_market_batch(payload: AkshareAllDatasetRequest) -> dict:
     )
     existing_frame = _merge_market_frames(existing_frame, warehouse_frame)
     if existing_frame is not None:
-        existing_coverage = _all_market_coverage(existing_frame, symbols, payload.benchmark)
+        existing_coverage = _all_market_coverage(
+            existing_frame, symbols, payload.benchmark, payload.start_date, payload.end_date
+        )
     covered = set(existing_coverage.get("covered_symbols", []))
     missing_symbols = [symbol for symbol in symbols if normalize_symbol(symbol) not in covered]
-    if not missing_symbols and existing_record and existing_frame is not None:
-        result = _replace_dataset_snapshot(existing_record, existing_frame, "akshare_all")
-        for duplicate_record in duplicate_records:
-            _delete_dataset_record_and_file(duplicate_record)
+    if not missing_symbols and existing_frame is not None:
+        result = {
+            **(existing_record or {}),
+            "id": existing_record.get("id") if existing_record else None,
+            "name": payload.name,
+            "source": "local_warehouse",
+            "symbol_count": len(symbols),
+            "row_count": int(len(existing_frame)),
+            "start_date": payload.start_date,
+            "end_date": payload.end_date,
+            "duplicate": bool(existing_record),
+            "summary": {
+                "symbol_count": len(symbols),
+                "row_count": int(len(existing_frame)),
+                "start_date": payload.start_date,
+                "end_date": payload.end_date,
+            },
+            "quality_checks": [],
+        }
         result["_coverage"] = {
             key: value
-            for key, value in _all_market_coverage(existing_frame, symbols, payload.benchmark).items()
-            if key != "covered_symbols"
+            for key, value in _all_market_coverage(
+                existing_frame, symbols, payload.benchmark, payload.start_date, payload.end_date
+            ).items()
+            if key not in {"covered_symbols", "ranges"}
         }
         result["_warehouse"] = {
             "covered_before_fetch": warehouse_coverage["covered"],
@@ -1046,10 +1157,8 @@ def _sync_all_market_batch(payload: AkshareAllDatasetRequest) -> dict:
         result["_batch_covered_symbols"] = []
         result["_failed_symbols"] = []
         result["_skipped_symbols"] = sorted(skipped_symbols)
-        if duplicate_records:
-            result["_consolidated_dataset_ids"] = [record["id"] for record in duplicate_records]
         result["_sync_note"] = (
-            f"沪深全A已覆盖 {result['_coverage']['covered']} / "
+            f"本地日线仓库已覆盖 {result['_coverage']['covered']} / "
             f"{result['_coverage']['expected']} 只，无需补齐"
         )
         return result
@@ -1069,7 +1178,9 @@ def _sync_all_market_batch(payload: AkshareAllDatasetRequest) -> dict:
         if normalize_symbol(symbol) not in fetched_symbol_set
     ]
     merged_frame = _merge_market_frames(existing_frame, frame)
-    coverage = _all_market_coverage(merged_frame, symbols, payload.benchmark)
+    coverage = _all_market_coverage(
+        merged_frame, symbols, payload.benchmark, payload.start_date, payload.end_date
+    )
     previous_count = len(covered)
     if coverage["covered"] <= previous_count:
         raise ValueError(
@@ -1084,7 +1195,11 @@ def _sync_all_market_batch(payload: AkshareAllDatasetRequest) -> dict:
             result["_consolidated_dataset_ids"] = [record["id"] for record in duplicate_records]
     else:
         result = _persist_dataset(payload.name, merged_frame, "akshare_all")
-    result["_coverage"] = {key: value for key, value in coverage.items() if key != "covered_symbols"}
+    result["_coverage"] = {
+        key: value
+        for key, value in coverage.items()
+        if key not in {"covered_symbols", "ranges"}
+    }
     result["_warehouse"] = {
         "covered_before_fetch": warehouse_coverage["covered"],
         "fetched_symbols": len(batch_symbols),
@@ -1126,7 +1241,9 @@ async def sync_all_akshare_dataset(payload: AkshareAllDatasetRequest) -> dict:
             symbol
             for symbol in symbols
             if normalize_symbol(symbol) not in set(
-                _all_market_coverage(existing_frame, symbols, payload.benchmark).get("covered_symbols", [])
+                _all_market_coverage(
+                    existing_frame, symbols, payload.benchmark, payload.start_date, payload.end_date
+                ).get("covered_symbols", [])
             )
         ]
         warehouse_frame = await run_in_threadpool(
@@ -1138,23 +1255,38 @@ async def sync_all_akshare_dataset(payload: AkshareAllDatasetRequest) -> dict:
         )
         existing_frame = _merge_market_frames(existing_frame, warehouse_frame)
         if existing_frame is not None:
-            existing_coverage = _all_market_coverage(existing_frame, symbols, payload.benchmark)
+            existing_coverage = _all_market_coverage(
+                existing_frame, symbols, payload.benchmark, payload.start_date, payload.end_date
+            )
         covered = set(existing_coverage.get("covered_symbols", []))
         missing_symbols = [symbol for symbol in symbols if normalize_symbol(symbol) not in covered]
-        if not missing_symbols and existing_record and existing_frame is not None:
-            result = await run_in_threadpool(
-                _replace_dataset_snapshot, existing_record, existing_frame, "akshare_all"
-            )
-            for duplicate_record in duplicate_records:
-                await run_in_threadpool(_delete_dataset_record_and_file, duplicate_record)
+        if not missing_symbols and existing_frame is not None:
+            result = {
+                **(existing_record or {}),
+                "id": existing_record.get("id") if existing_record else None,
+                "name": payload.name,
+                "source": "local_warehouse",
+                "symbol_count": len(symbols),
+                "row_count": int(len(existing_frame)),
+                "start_date": payload.start_date,
+                "end_date": payload.end_date,
+                "duplicate": bool(existing_record),
+                "summary": {
+                    "symbol_count": len(symbols),
+                    "row_count": int(len(existing_frame)),
+                    "start_date": payload.start_date,
+                    "end_date": payload.end_date,
+                },
+                "quality_checks": [],
+            }
             result["_coverage"] = {
                 key: value
-                for key, value in _all_market_coverage(existing_frame, symbols, payload.benchmark).items()
-                if key != "covered_symbols"
+                for key, value in _all_market_coverage(
+                    existing_frame, symbols, payload.benchmark, payload.start_date, payload.end_date
+                ).items()
+                if key not in {"covered_symbols", "ranges"}
             }
-            if duplicate_records:
-                result["_consolidated_dataset_ids"] = [record["id"] for record in duplicate_records]
-            result["_sync_note"] = f"沪深全A已覆盖 {result['_coverage']['covered']} / {result['_coverage']['expected']} 只，无需补齐"
+            result["_sync_note"] = f"本地日线仓库已覆盖 {result['_coverage']['covered']} / {result['_coverage']['expected']} 只，无需补齐"
             return result
         batch_size = max(1, min(ALL_MARKET_SYNC_BATCH_SIZE, len(missing_symbols)))
         batch_symbols = missing_symbols[:batch_size]
@@ -1163,7 +1295,9 @@ async def sync_all_akshare_dataset(payload: AkshareAllDatasetRequest) -> dict:
             batch_symbols, payload.start_date, payload.end_date, payload.benchmark
         )
         merged_frame = _merge_market_frames(existing_frame, frame)
-        coverage = _all_market_coverage(merged_frame, symbols, payload.benchmark)
+        coverage = _all_market_coverage(
+            merged_frame, symbols, payload.benchmark, payload.start_date, payload.end_date
+        )
         previous_count = len(covered)
         if coverage["covered"] <= previous_count:
             raise ValueError(
@@ -1181,7 +1315,11 @@ async def sync_all_akshare_dataset(payload: AkshareAllDatasetRequest) -> dict:
             result["_consolidated_dataset_ids"] = [record["id"] for record in duplicate_records]
     else:
         result = await run_in_threadpool(_persist_dataset, payload.name, merged_frame, "akshare_all")
-    result["_coverage"] = {key: value for key, value in coverage.items() if key != "covered_symbols"}
+    result["_coverage"] = {
+        key: value
+        for key, value in coverage.items()
+        if key not in {"covered_symbols", "ranges"}
+    }
     result["_warehouse"] = {
         "covered_before_fetch": warehouse_coverage["covered"],
         "fetched_symbols": len(batch_symbols),

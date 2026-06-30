@@ -993,7 +993,7 @@ export function DataDrawer({
                 >
                   <b>{pool.title}</b>
                   <span>{selectedInPool}/{pool.symbols.length} 只 · {pool.helper}</span>
-                  <small>{coverage ? `本地覆盖 ${coverage.covered}/${coverage.expected}，缺 ${coverage.missing}` : "正在读取本地覆盖"}</small>
+                  <small>{coverage ? `本地覆盖 ${coverage.covered}/${coverage.expected}，缺失 ${coverage.missing}，边缘不完整 ${coverage.partial || 0}` : "正在读取本地覆盖"}</small>
                 </button>
               );
             })}
@@ -1010,7 +1010,7 @@ export function DataDrawer({
             </label>
             <small>
               {selectedCoverage
-                ? `当前选择本地覆盖 ${selectedCoverage.covered}/${selectedCoverage.expected}，缺 ${selectedCoverage.missing}`
+                ? `当前选择本地覆盖 ${selectedCoverage.covered}/${selectedCoverage.expected}，缺失 ${selectedCoverage.missing}，边缘不完整 ${selectedCoverage.partial || 0}`
                 : "选择板块后会按这个时间段检查本地仓库"}
             </small>
             <div className="data-pick-actions">
