@@ -97,7 +97,7 @@ export function SettingsDrawer({ settings, setSettings, onRun, onCancel, running
       </section>
       <section>
         <h3>数据设置</h3>
-        <SettingRow label="数据来源"><span className="static-value">{settings.dataset_id ? "固定数据快照" : "演示数据"}</span></SettingRow>
+        <SettingRow label="数据来源"><span className="static-value">{settings.dataset_id ? "本地数据快照" : "当前股票池 / 本地日线仓库"}</span></SettingRow>
         <SettingRow label="信号价格口径">
           <select value={settings.signal_price_mode || "unadjusted"} onChange={(event) => update("signal_price_mode", event.target.value)}>
             <option value="unadjusted">未复权收盘价</option>
@@ -1055,7 +1055,7 @@ export function DataDrawer({
           </div>
         )}
         <div className="modal-actions">
-          <span className="selection-count">{settings.dataset_id ? "已选择固定数据快照" : `已选择 ${settings.symbols.length} 只股票`}</span>
+          <span className="selection-count">{settings.dataset_id ? "已选择本地数据快照" : `已选择 ${settings.symbols.length} 只股票`}</span>
           <button className="primary" disabled={!settings.symbols.length} onClick={close}>确认数据源</button>
         </div>
       </div>

@@ -91,7 +91,7 @@ function DataCenterPage({
     ? selectedCoverage && !selectedCoverage.isComplete
       ? `当前快照覆盖不足：${selectedCoverage.syncedCount} / ${selectedCoverage.expectedCount} 标的`
       : `当前：${selectedDataset.name}`
-    : "当前使用演示数据";
+    : "当前股票池 / 本地日线仓库";
   const taskCovered = Number(allMarketSyncTask?.covered || allMarketSyncTask?.coverage?.covered || 0);
   const taskExpected = Number(allMarketSyncTask?.expected || allMarketSyncTask?.coverage?.expected || 0);
   const taskProgress = taskExpected ? Math.round((taskCovered / taskExpected) * 100) : 0;
@@ -256,7 +256,7 @@ function BacktestCenterPage({ settings, running, progress, metrics, openStep, op
       <MetricsStrip metrics={metrics} />
       <div className="page-card-grid">
         <PageCard title="时间区间" value={`${settings.start_date} → ${settings.end_date}`} note="顶部日期控件可直接调整" />
-        <PageCard title="股票数量" value={`${settings.symbols.length} 只`} note={settings.dataset_id ? "来自固定数据快照" : "来自当前股票池"} />
+        <PageCard title="股票数量" value={`${settings.symbols.length} 只`} note={settings.dataset_id ? "来自本地数据快照" : "来自当前股票池"} />
         <PageCard title="最大仓位" value={`${Math.round(settings.max_position * 100)}%`} note={`单股上限 ${Math.round((settings.max_symbol_position || 0.35) * 100)}%`} />
         <PageCard title="交易规则" value="T+1 / 整手" note="信号收盘生成，下一交易日开盘撮合" />
       </div>
@@ -469,13 +469,6 @@ function App() {
   const runBacktest = async (candidateSignal) => {
     const signal = candidateSignal?.constructor?.name === "AbortSignal" ? candidateSignal : undefined;
     if (signal?.aborted) return;
-
-    // 没有固定数据集且股票数超过 5 只时，演示数据无法覆盖，自动回退到默认 5 只
-    if (!settings.dataset_id && settings.symbols.length > 5) {
-      setSettings((current) => ({ ...current, symbols: [...initialSettings.symbols] }));
-      setNotice(`演示数据仅支持 5 只预设股票，已自动重置为 ${initialSettings.symbols.join(", ")}；如需更多标的请先同步真实行情`);
-      return;
-    }
 
     let taskId = null;
     const cancelSubmittedTask = () => {
