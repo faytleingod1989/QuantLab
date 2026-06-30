@@ -862,7 +862,12 @@ export function DataDrawer({
     [marketCoverage]
   );
   const selectedCoverage = marketCoverage?.selected?.coverage;
+  const allMarketCoverage = coverageByPool.all_a;
   const allMarketPoolCount = stockPools.find((pool) => pool.id === "all_a")?.symbols.length || 0;
+  const marketTotalCount = marketCoverage?.pools?.find((pool) => pool.id === "all_market")?.symbol_count || securities.length;
+  const taskExpected = Number(allMarketSyncTask?.expected || allMarketSyncTask?.coverage?.expected || allMarketCoverage?.expected || allMarketPoolCount || 0);
+  const taskCovered = Number(allMarketSyncTask?.covered || allMarketSyncTask?.coverage?.covered || allMarketCoverage?.covered || 0);
+  const taskProgress = taskExpected ? Math.round((taskCovered / taskExpected) * 100) : 0;
   const hasIncompleteAllMarketDataset = datasets.some((dataset) => (
     dataset.source === "akshare_all" &&
     allMarketPoolCount &&
@@ -881,6 +886,7 @@ export function DataDrawer({
   const applySymbols = (symbols) =>
     setSettings((current) => ({
       ...current,
+      dataset_id: null,
       symbols,
     }));
   const togglePool = (pool) =>
@@ -894,6 +900,7 @@ export function DataDrawer({
       }
       return {
         ...current,
+        dataset_id: null,
         symbols: securities
           .map((item) => item.symbol)
           .filter((symbol) => currentSymbols.has(symbol) && symbol !== current.benchmark),
@@ -905,17 +912,24 @@ export function DataDrawer({
       for (const symbol of filteredSymbols) currentSymbols.add(symbol);
       return {
         ...current,
+        dataset_id: null,
         symbols: securities
           .map((item) => item.symbol)
           .filter((symbol) => currentSymbols.has(symbol) && symbol !== current.benchmark),
       };
     });
+  const updateDate = (field, value) =>
+    setSettings((current) => ({
+      ...current,
+      [field]: value,
+    }));
   const clearSelection = () => applySymbols([]);
   const failedSymbols = allMarketSyncTask?.failed_symbols || allMarketSyncTask?.last_failed_symbols || [];
   const skippedSymbols = allMarketSyncTask?.skipped_symbols || [];
   const toggle = (symbol) =>
     setSettings((current) => ({
       ...current,
+      dataset_id: null,
       symbols: current.symbols.includes(symbol)
         ? current.symbols.filter((item) => item !== symbol)
         : [...current.symbols, symbol],
@@ -943,91 +957,95 @@ export function DataDrawer({
           </div>
           <button className="icon-button" onClick={close} aria-label="关闭"><X size={20} /></button>
         </div>
-        {allMarketSyncTask?.status && allMarketSyncTask.status !== "idle" ? (
-          <div className="sync-progress-panel compact">
-            <div>
-              <b>全A补齐任务：{allMarketSyncTask.status}</b>
-              <span>
-                第 {allMarketSyncTask.batch_count || 0} 批 · 覆盖 {allMarketSyncTask.covered || 0}/
-                {allMarketSyncTask.expected || allMarketSyncTask.coverage?.expected || "?"}
-              </span>
-            </div>
-            <progress
-              value={Number(allMarketSyncTask.covered || 0)}
-              max={Number(allMarketSyncTask.expected || allMarketSyncTask.coverage?.expected || 1)}
-            />
-            {failedSymbols.length ? (
-              <div className="sync-failed-row">
-                <span>失败 {failedSymbols.length} 只：{failedSymbols.slice(0, 8).join("、")}{failedSymbols.length > 8 ? "…" : ""}</span>
-                {!syncingAll ? <button className="ghost" onClick={onRetryFailedAll}>重试失败项</button> : null}
-              </div>
-            ) : null}
-            {skippedSymbols.length ? (
-              <div className="sync-failed-row muted">
-                <span>已跳过 {skippedSymbols.length} 只长期失败标的：{skippedSymbols.slice(0, 8).join("、")}{skippedSymbols.length > 8 ? "…" : ""}</span>
-              </div>
-            ) : null}
+        <section className="data-sync-overview">
+          <div className="data-sync-title">
+            <b>全A补齐任务：{allMarketSyncTask?.status && allMarketSyncTask.status !== "idle" ? allMarketSyncTask.status : "local"}</b>
+            <strong>A股总数据 {marketTotalCount} 只</strong>
+            <span>第 {allMarketSyncTask?.batch_count || 0} 批 · 覆盖 {taskCovered}/{taskExpected || "?"}</span>
           </div>
-        ) : null}
-        <div className="dataset-picker">
-          <button className={!settings.dataset_id ? "selected" : ""} onClick={() => onSelectDataset(null)}>
-            <b>可复现演示数据</b>
-            <span>离线生成 · 5 只示例股票</span>
-          </button>
-          {datasets.map((dataset) => {
+          <progress value={taskCovered} max={taskExpected || 1} />
+          <small>
+            本地日线仓库会优先复用已有行情；补齐只拉取当前时间范围和股票池缺失的部分。
+            {taskExpected ? ` 当前覆盖率 ${taskProgress}%` : ""}
+          </small>
+          {failedSymbols.length ? (
+            <div className="sync-failed-row">
+              <span>失败 {failedSymbols.length} 只：{failedSymbols.slice(0, 8).join("、")}{failedSymbols.length > 8 ? "…" : ""}</span>
+              {!syncingAll ? <button className="ghost" onClick={onRetryFailedAll}>重试失败项</button> : null}
+            </div>
+          ) : null}
+          {skippedSymbols.length ? (
+            <div className="sync-failed-row muted">
+              <span>已跳过 {skippedSymbols.length} 只长期失败标的：{skippedSymbols.slice(0, 8).join("、")}{skippedSymbols.length > 8 ? "…" : ""}</span>
+            </div>
+          ) : null}
+        </section>
+        <section className="data-pick-dashboard">
+          <div className="data-market-grid">
+            <button className={`market-tile demo-tile ${!settings.dataset_id ? "selected" : ""}`} onClick={() => onSelectDataset(null)}>
+              <b>可复现演示数据</b>
+              <span>离线生成 · 5 只示例股票</span>
+              <small>适合快速试跑流程</small>
+            </button>
+            {stockPools.map((pool) => {
+              const coverage = coverageByPool[pool.id];
+              const selectedInPool = settings.symbols.filter((symbol) => pool.symbols.includes(symbol)).length;
+              return (
+                <button
+                  key={pool.id}
+                  data-testid={`stock-pool-${pool.id}`}
+                  className={`market-tile ${poolStates[pool.id] === "selected" ? "selected" : poolStates[pool.id] === "partial" ? "partial" : ""}`}
+                  onClick={() => togglePool(pool)}
+                  disabled={!pool.symbols.length}
+                >
+                  <b>{pool.title}</b>
+                  <span>{selectedInPool}/{pool.symbols.length} 只 · {pool.helper}</span>
+                  <small>{coverage ? `本地覆盖 ${coverage.covered}/${coverage.expected}，缺 ${coverage.missing}` : "正在读取本地覆盖"}</small>
+                </button>
+              );
+            })}
+          </div>
+          <div className="data-date-card">
+            <b>时间维度</b>
+            <label>
+              <span>起始时间</span>
+              <input type="date" value={settings.start_date} onChange={(event) => updateDate("start_date", event.target.value)} />
+            </label>
+            <label>
+              <span>结束时间</span>
+              <input type="date" value={settings.end_date} onChange={(event) => updateDate("end_date", event.target.value)} />
+            </label>
+            <small>
+              {selectedCoverage
+                ? `当前选择本地覆盖 ${selectedCoverage.covered}/${selectedCoverage.expected}，缺 ${selectedCoverage.missing}`
+                : "选择板块后会按这个时间段检查本地仓库"}
+            </small>
+            <div className="data-pick-actions">
+              <button className="ghost" onClick={selectFiltered} disabled={!filteredSymbols.length}>加入搜索结果</button>
+              <button className="danger-ghost" onClick={clearSelection} disabled={!settings.symbols.length}>清空选择</button>
+            </div>
+          </div>
+        </section>
+        <div className="dataset-snapshot-strip">
+          <span>固定快照</span>
+          {datasets.length ? datasets.slice(0, 4).map((dataset) => {
             const coveredCount = Math.max(0, Number(dataset.symbol_count || 0) - (dataset.source === "akshare_all" ? 1 : 0));
             const lowCoverage = dataset.source === "akshare_all" && allMarketPoolCount && coveredCount < Math.ceil(allMarketPoolCount * 0.9);
             return (
-              <div key={dataset.id} className={`dataset-card ${settings.dataset_id === dataset.id ? "selected" : ""} ${lowCoverage ? "warning" : ""}`}>
-                <button className="dataset-select" onClick={() => onSelectDataset(dataset)}>
+              <div key={dataset.id} className={`snapshot-chip ${settings.dataset_id === dataset.id ? "selected" : ""} ${lowCoverage ? "warning" : ""}`}>
+                <button onClick={() => onSelectDataset(dataset)}>
                   <b>{dataset.name}</b>
-                  <span>{dataset.source === "akshare" || dataset.source === "akshare_all" ? "AkShare" : "CSV"} · {dataset.symbol_count} 标的 · {dataset.row_count} 行{dataset.source === "akshare_all" && allMarketPoolCount ? ` · A股覆盖 ${coveredCount}/${allMarketPoolCount}` : ""}</span>
-                  <small>{dataset.start_date} — {dataset.end_date}</small>
-                  {lowCoverage ? <small className="dataset-warning">全A快照覆盖不足，可继续点击同步补齐剩余股票。</small> : null}
+                  <small>{dataset.symbol_count} 标的 · {dataset.start_date} — {dataset.end_date}</small>
                 </button>
                 <button className="dataset-delete" onClick={() => onDeleteDataset(dataset)} aria-label={`删除 ${dataset.name}`} title="删除快照">
                   <Trash size={14} />
                 </button>
               </div>
             );
-          })}
+          }) : <em>暂无固定数据快照</em>}
         </div>
         {!settings.dataset_id ? (
           <>
-            <div className="security-bulk-panel">
-              <div className="security-bulk-copy">
-                <b>批量选择股票池</b>
-                <small>
-                  时间：{settings.start_date} — {settings.end_date}
-                  {selectedCoverage ? `；当前选择本地覆盖 ${selectedCoverage.covered}/${selectedCoverage.expected}，缺 ${selectedCoverage.missing}` : ""}
-                </small>
-              </div>
-              <div className="security-bulk-actions">
-                {stockPools.map((pool) => (
-                  <button
-                    key={pool.id}
-                    data-testid={`stock-pool-${pool.id}`}
-                    className={poolStates[pool.id] === "selected" ? "selected" : poolStates[pool.id] === "partial" ? "partial" : ""}
-                    onClick={() => togglePool(pool)}
-                    disabled={!pool.symbols.length}
-                  >
-                    <b>{pool.title}</b>
-                    <span>
-                      {settings.symbols.filter((symbol) => pool.symbols.includes(symbol)).length}/{pool.symbols.length} 只 · {pool.helper}
-                      {coverageByPool[pool.id] ? ` · 本地 ${coverageByPool[pool.id].covered}/${coverageByPool[pool.id].expected}，缺 ${coverageByPool[pool.id].missing}` : ""}
-                    </span>
-                  </button>
-                ))}
-                <button className="utility" onClick={selectFiltered} disabled={!filteredSymbols.length}>
-                  当前搜索结果
-                  <span>{filteredSymbols.length} 只</span>
-                </button>
-                <button className="utility danger" onClick={clearSelection} disabled={!settings.symbols.length}>
-                  清空选择
-                </button>
-              </div>
-              <small className="security-bulk-note">批量选择负责确定股票池；“同步所选”会按当前时间范围检查本地仓库，已有行情直接复用，只补缺失标的。</small>
-            </div>
             <div className="security-search">
               <input
                 type="search"
