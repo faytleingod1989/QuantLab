@@ -9,7 +9,6 @@ import {
   Play,
   Pulse,
   SlidersHorizontal,
-  Trash,
   X,
 } from "@phosphor-icons/react";
 
@@ -719,8 +718,7 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
 }
 
 const stockPoolOptions = [
-  { id: "all_a", title: "沪深全A", helper: "沪深主板 + 创业板 + 科创板，不含北交" },
-  { id: "all_market", title: "全市场", helper: "沪深全A + 北交所" },
+  { id: "all_a", title: "沪深全A", helper: "上证主板 + 深证主板 + 创业板 + 科创板" },
   { id: "sh_main", title: "上证主板", helper: "600/601/603/605 开头" },
   { id: "sz_main", title: "深证主板", helper: "000/001/002/003 开头" },
   { id: "gem", title: "创业板", helper: "300/301/302 开头" },
@@ -753,7 +751,7 @@ export function securityBelongsToPool(item, poolId) {
     return false;
   }
   if (poolId === "all_a") {
-    return exchange === "SH" || exchange === "SZ";
+    return ["SH", "SZ"].includes(exchange) && ["0", "3", "6"].some((prefix) => code.startsWith(prefix));
   }
   if (poolId === "all_market") {
     return exchange === "SH" || exchange === "SZ" || exchange === "BJ";
@@ -765,10 +763,10 @@ export function securityBelongsToPool(item, poolId) {
     return exchange === "SZ";
   }
   if (poolId === "sh_main") {
-    return exchange === "SH" && !code.startsWith("688") && !code.startsWith("689");
+    return exchange === "SH" && ["600", "601", "603", "605"].some((prefix) => code.startsWith(prefix));
   }
   if (poolId === "sz_main") {
-    return exchange === "SZ" && !code.startsWith("300") && !code.startsWith("301") && !code.startsWith("302");
+    return exchange === "SZ" && ["000", "001", "002", "003"].some((prefix) => code.startsWith(prefix));
   }
   if (poolId === "gem") {
     return exchange === "SZ" && (board.includes("创业") || code.startsWith("300") || code.startsWith("301") || code.startsWith("302"));
@@ -864,7 +862,7 @@ export function DataDrawer({
   const selectedCoverage = marketCoverage?.selected?.coverage;
   const allMarketCoverage = coverageByPool.all_a;
   const allMarketPoolCount = stockPools.find((pool) => pool.id === "all_a")?.symbols.length || 0;
-  const marketTotalCount = marketCoverage?.pools?.find((pool) => pool.id === "all_market")?.symbol_count || securities.length;
+  const marketTotalCount = marketCoverage?.total_symbol_count || source?.symbol_count || securities.length;
   const taskExpected = Number(allMarketSyncTask?.expected || allMarketSyncTask?.coverage?.expected || allMarketCoverage?.expected || allMarketPoolCount || 0);
   const taskCovered = Number(allMarketSyncTask?.covered || allMarketSyncTask?.coverage?.covered || allMarketCoverage?.covered || 0);
   const taskProgress = taskExpected ? Math.round((taskCovered / taskExpected) * 100) : 0;
@@ -982,11 +980,6 @@ export function DataDrawer({
         </section>
         <section className="data-pick-dashboard">
           <div className="data-market-grid">
-            <button className={`market-tile demo-tile ${!settings.dataset_id ? "selected" : ""}`} onClick={() => onSelectDataset(null)}>
-              <b>可复现演示数据</b>
-              <span>离线生成 · 5 只示例股票</span>
-              <small>适合快速试跑流程</small>
-            </button>
             {stockPools.map((pool) => {
               const coverage = coverageByPool[pool.id];
               const selectedInPool = settings.symbols.filter((symbol) => pool.symbols.includes(symbol)).length;
@@ -1026,24 +1019,6 @@ export function DataDrawer({
             </div>
           </div>
         </section>
-        <div className="dataset-snapshot-strip">
-          <span>固定快照</span>
-          {datasets.length ? datasets.slice(0, 4).map((dataset) => {
-            const coveredCount = Math.max(0, Number(dataset.symbol_count || 0) - (dataset.source === "akshare_all" ? 1 : 0));
-            const lowCoverage = dataset.source === "akshare_all" && allMarketPoolCount && coveredCount < Math.ceil(allMarketPoolCount * 0.9);
-            return (
-              <div key={dataset.id} className={`snapshot-chip ${settings.dataset_id === dataset.id ? "selected" : ""} ${lowCoverage ? "warning" : ""}`}>
-                <button onClick={() => onSelectDataset(dataset)}>
-                  <b>{dataset.name}</b>
-                  <small>{dataset.symbol_count} 标的 · {dataset.start_date} — {dataset.end_date}</small>
-                </button>
-                <button className="dataset-delete" onClick={() => onDeleteDataset(dataset)} aria-label={`删除 ${dataset.name}`} title="删除快照">
-                  <Trash size={14} />
-                </button>
-              </div>
-            );
-          }) : <em>暂无固定数据快照</em>}
-        </div>
         {!settings.dataset_id ? (
           <>
             <div className="security-search">

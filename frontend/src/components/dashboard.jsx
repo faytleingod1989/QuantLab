@@ -100,7 +100,7 @@ export function LoadingBanner({ message }) {
 }
 
 export function DashboardFooter({ settings, source }) {
-  const sourceLabel = source?.available === false ? source.message : settings.dataset_id ? "固定快照" : source?.source || "连接中";
+  const sourceLabel = source?.available === false ? source.message : settings.dataset_id ? "本地数据仓库" : source?.source || "连接中";
   return (
     <footer>
       <span><i className={source?.available === false ? "offline-dot" : ""} />{source?.available === false ? "数据服务异常" : "数据状态正常"}</span>

@@ -421,6 +421,7 @@ def market_coverage(payload: MarketCoverageRequest) -> dict:
         pool["id"]: _active_market_symbols(pool["id"], refresh_if_sparse=False)
         for pool in MARKET_POOLS
     }
+    total_symbol_count = len(_active_market_symbols("all_market", refresh_if_sparse=False))
     selected_symbols = payload.symbols or []
     range_symbols = sorted(
         {
@@ -464,6 +465,7 @@ def market_coverage(payload: MarketCoverageRequest) -> dict:
         "start_date": payload.start_date,
         "end_date": payload.end_date,
         "benchmark": payload.benchmark,
+        "total_symbol_count": total_symbol_count,
         "pools": pool_results,
         "selected": {
             "symbol_count": len({normalize_symbol(symbol) for symbol in selected_symbols}),
@@ -480,7 +482,6 @@ def market_coverage(payload: MarketCoverageRequest) -> dict:
 
 MARKET_POOLS = [
     {"id": "all_a", "title": "沪深全A", "helper": "沪深主板 + 创业板 + 科创板，不含北交"},
-    {"id": "all_market", "title": "全市场", "helper": "沪深全A + 北交所"},
     {"id": "sh_main", "title": "上证主板", "helper": "600/601/603/605 开头"},
     {"id": "sz_main", "title": "深证主板", "helper": "000/001/002/003 开头"},
     {"id": "gem", "title": "创业板", "helper": "300/301/302 开头"},

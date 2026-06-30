@@ -237,6 +237,19 @@ def test_all_market_sync_symbol_pool_uses_active_sh_sz_only(monkeypatch):
     assert fake_repository.synced_records == records
 
 
+def test_public_market_pool_options_match_data_picker_categories():
+    from backend import app as app_module
+
+    assert [pool["id"] for pool in app_module.MARKET_POOLS] == [
+        "all_a",
+        "sh_main",
+        "sz_main",
+        "gem",
+        "star",
+        "bj",
+    ]
+
+
 def test_all_market_sync_rejects_low_coverage_snapshot():
     from fastapi import HTTPException
     from backend import app as app_module

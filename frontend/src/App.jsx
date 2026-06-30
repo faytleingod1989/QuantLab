@@ -136,7 +136,7 @@ function DataCenterPage({
         <PageCard title="数据快照" value={`${datasets.length} 个`} note={snapshotNote} />
         <PageCard title="沪深可同步股票" value={`${syncableAllMarketCount || securities.length} 只`} note={syncableAllMarketCount ? `主表总计 ${securities.length} 只；北交所/退市不纳入全 A 同步` : "等待证券主表加载"} />
         <PageCard title="数据源状态" value={source?.akshare_available ? "AkShare 可用" : "本地/演示"} note={source?.message || "等待数据源检测"} />
-        <PageCard title="质量检查" value={`${datasetQuality?.quality_checks?.length || 0} 项`} note={settings.dataset_id ? "固定快照质量记录" : "演示数据暂无固定检查"} />
+        <PageCard title="质量检查" value={`${datasetQuality?.quality_checks?.length || 0} 项`} note={settings.dataset_id ? "本地数据质量记录" : "当前选择暂无固定检查"} />
       </div>
       <div className="view-panel">
         <div className="panel-head"><b>最近数据集</b><span>可直接选择或删除旧快照；重复同步会复用相同指纹快照</span></div>
