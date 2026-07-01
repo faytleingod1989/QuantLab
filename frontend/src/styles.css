@@ -100,7 +100,6 @@ table{font-size:11px}th,td{height:29px}.heat-row>*{font-size:10px}.heat-row{min-
 .warehouse-chart-empty{height:100%;min-height:120px;border:1px dashed #263941;border-radius:6px;background:rgba(8,18,22,.62);display:grid;place-items:center;text-align:center;color:#78888e;font-size:13px;line-height:1.6;padding:18px}
 .chart-grid line{stroke:#1d2d34;stroke-width:1}
 .candle-up line,.candle-up rect{stroke:#f0626c;fill:#f0626c}.candle-down line,.candle-down rect{stroke:#30c7a4;fill:#30c7a4}
-.last-price-line{stroke:#d8c45d;stroke-width:1;stroke-dasharray:5 5;opacity:.75}
 .chart-axis-label,.chart-date-label{fill:#7e8e94;font-size:12px;font-variant-numeric:tabular-nums}
 .volume-up{fill:rgba(240,98,108,.72)}.volume-down{fill:rgba(48,199,164,.72)}
 .chart-interactive{cursor:crosshair;touch-action:none}.chart-hover-layer{pointer-events:none}.chart-crosshair{stroke:#7be1d8;stroke-width:1.2;stroke-dasharray:4 4;opacity:.82}.chart-crosshair.muted{stroke:#d7c85c;opacity:.58}.chart-hover-layer circle{fill:#f8d66d;stroke:#071014;stroke-width:2}.hovered-candle,.hovered-volume{stroke:#f8d66d!important;stroke-width:2!important}.chart-tooltip-box rect{fill:rgba(7,16,20,.92);stroke:#35545c;stroke-width:1}.chart-tooltip-box text{fill:#dce5e7;font-size:12px;font-variant-numeric:tabular-nums}.chart-tooltip-box .price-change-up{fill:#f0626c}.chart-tooltip-box .price-change-down{fill:#30c7a4}.chart-tooltip-box .price-change-flat{fill:#dce5e7}.volume-tooltip text{font-size:12px}

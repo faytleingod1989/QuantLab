@@ -121,6 +121,14 @@ function ChartEmptyState({ text }) {
 function KLineSvg({ bars, hoveredIndex, onHoverIndex, onLeave, onWheel }) {
   const visibleBars = bars || [];
   if (!visibleBars.length) return <ChartEmptyState text="暂无本地日 K 数据，请先补齐该股票行情。" />;
+  const width = 900;
+  const height = 320;
+  const padding = { top: 18, right: 54, bottom: 28, left: 18 };
+  const plotWidth = width - padding.left - padding.right;
+  const renderStride = Math.max(1, Math.ceil(visibleBars.length / 180));
+  const displayBars = visibleBars
+    .map((bar, index) => ({ bar, index }))
+    .filter(({ index }) => index === visibleBars.length - 1 || index % renderStride === 0);
   const prices = visibleBars.flatMap((bar) => [
     toChartNumber(bar.high),
     toChartNumber(bar.low),
@@ -131,13 +139,9 @@ function KLineSvg({ bars, hoveredIndex, onHoverIndex, onLeave, onWheel }) {
   const minPrice = Math.min(...prices);
   const maxPrice = Math.max(...prices);
   const range = maxPrice - minPrice || Math.max(maxPrice * 0.02, 1);
-  const width = 900;
-  const height = 320;
-  const padding = { top: 18, right: 54, bottom: 28, left: 18 };
-  const plotWidth = width - padding.left - padding.right;
   const plotHeight = height - padding.top - padding.bottom;
   const step = plotWidth / Math.max(visibleBars.length, 1);
-  const candleWidth = Math.max(3, Math.min(10, step * 0.58));
+  const candleWidth = Math.max(1.8, Math.min(10, step * renderStride * 0.52));
   const y = (price) => padding.top + ((maxPrice - price) / range) * plotHeight;
   const lastBar = visibleBars[visibleBars.length - 1];
   const lastClose = toChartNumber(lastBar?.close);
@@ -162,7 +166,7 @@ function KLineSvg({ bars, hoveredIndex, onHoverIndex, onLeave, onWheel }) {
           <line key={ratio} x1={padding.left} x2={width - padding.right} y1={padding.top + ratio * plotHeight} y2={padding.top + ratio * plotHeight} />
         ))}
       </g>
-      {visibleBars.map((bar, index) => {
+      {displayBars.map(({ bar, index }) => {
         const open = toChartNumber(bar.open);
         const close = toChartNumber(bar.close);
         const high = toChartNumber(bar.high);
@@ -178,19 +182,17 @@ function KLineSvg({ bars, hoveredIndex, onHoverIndex, onLeave, onWheel }) {
           </g>
         );
       })}
-      <line className="last-price-line" x1={padding.left} x2={width - padding.right} y1={y(lastClose)} y2={y(lastClose)} />
       {hoveredBar ? (
         <g className="chart-hover-layer">
           <line className="chart-crosshair" x1={hoveredX} x2={hoveredX} y1={padding.top} y2={height - padding.bottom} />
           <line className="chart-crosshair muted" x1={padding.left} x2={width - padding.right} y1={y(hoveredClose)} y2={y(hoveredClose)} />
           <circle cx={hoveredX} cy={y(hoveredClose)} r="4" />
           <g className="chart-tooltip-box" transform={`translate(${tooltipX} ${padding.top + 8})`}>
-            <rect width="176" height="92" rx="5" />
+            <rect width="176" height="76" rx="5" />
             <text x="10" y="18">{hoveredBar.date}</text>
             <text x="10" y="36">开 {toChartNumber(hoveredBar.open).toFixed(2)}  高 {toChartNumber(hoveredBar.high).toFixed(2)}</text>
             <text x="10" y="54">低 {toChartNumber(hoveredBar.low).toFixed(2)}  收 {toChartNumber(hoveredBar.close).toFixed(2)}</text>
             <text className={`price-change-${hoveredChange.className}`} x="10" y="72">涨跌 {hoveredChange.text}</text>
-            <text x="10" y="88">量 {compactNumber(hoveredBar.volume)}</text>
           </g>
         </g>
       ) : null}
