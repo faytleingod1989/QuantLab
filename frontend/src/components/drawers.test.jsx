@@ -119,15 +119,18 @@ describe("strategy JSON import/export helpers", () => {
 
   it("keeps every built-in strategy template importable", () => {
     expect(strategyTemplates.map((template) => template.id)).toEqual([
-      "control_pullback",
-      "chip_stable_ma_stack",
-      "box_breakout",
-      "neighbor_grandpa_trading",
+      "top_down_trend_control",
+      "c104_four_up_momentum",
+      "box_breakout_launch",
+      "pullback_resonance",
+      "right_side_reversal",
     ]);
 
     for (const template of strategyTemplates) {
       const imported = normalizeImportedStrategy(template.strategy);
       expect(imported.name).toBe(template.strategy.name);
+      expect(template.category).toBeTruthy();
+      expect(template.strategy.no_future_note).toBeTruthy();
       expect(imported.buy_conditions.length).toBeGreaterThan(0);
       expect(imported.sell_conditions.length).toBeGreaterThan(0);
     }

@@ -116,6 +116,37 @@ def test_distribution_risk_indicators_detect_heavy_down_and_wide_range():
     assert _condition(frame, RuleCondition(indicator="range_amplitude", operator="above", left=1, threshold=0.1)).iloc[-1]
 
 
+def test_kline_confirmation_indicators_do_not_depend_on_future_bars():
+    dates = pd.bdate_range("2024-01-02", periods=8)
+    base = pd.DataFrame(
+        {
+            "trade_date": dates,
+            "open": [10.0, 10.2, 10.3, 10.4, 10.8, 10.1, 10.7, 10.9],
+            "high": [10.3, 10.5, 10.7, 11.0, 11.2, 11.0, 11.3, 11.4],
+            "low": [9.9, 10.1, 10.2, 10.3, 9.6, 10.0, 10.6, 10.8],
+            "close": [10.2, 10.4, 10.6, 10.9, 11.0, 10.6, 11.1, 11.2],
+            "volume": [1000, 1100, 1200, 1300, 1500, 1200, 1600, 1700],
+        }
+    )
+    base["signal_close"] = base["close"]
+    changed_future = base.copy()
+    changed_future.loc[5:, ["open", "high", "low", "close", "signal_close", "volume"]] = [
+        [99.0, 100.0, 98.0, 99.5, 99.5, 9000],
+        [88.0, 89.0, 87.0, 88.5, 88.5, 8000],
+        [77.0, 78.0, 76.0, 77.5, 77.5, 7000],
+    ]
+
+    rules = [
+        RuleCondition(indicator="consecutive_up", operator="above", left=4, threshold=1),
+        RuleCondition(indicator="long_lower_shadow", operator="above", left=1, threshold=0.45),
+        RuleCondition(indicator="bullish_engulfing", operator="above", left=1, threshold=0),
+    ]
+    for rule in rules:
+        original_signal = _condition(base, rule).iloc[4]
+        changed_future_signal = _condition(changed_future, rule).iloc[4]
+        assert original_signal == changed_future_signal
+
+
 def test_indicator_defaults_are_normalized_and_invalid_periods_rejected():
     macd = RuleCondition(indicator="macd")
     assert (macd.left, macd.right, macd.threshold) == (12, 26, 9)

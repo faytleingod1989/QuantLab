@@ -560,6 +560,9 @@ const STRATEGY_INDICATOR_OPTIONS = [
   ["volume_return_spike", "放量涨跌"],
   ["return_between", "区间收益"],
   ["kline_up_ratio", "阳线密度"],
+  ["consecutive_up", "连续阳线"],
+  ["bullish_engulfing", "阳包阴"],
+  ["long_lower_shadow", "大长腿"],
   ["body_amplitude", "振幅/实体"],
   ["life_line_watch", "生命线监控"],
 ];
@@ -865,8 +868,8 @@ function StrategyResearchPage({ settings, setSettings, strategyRecord, openStrat
           </span>
         </div>
         <div className="view-actions">
-          <button className="ghost" onClick={() => openStrategy("selection")}>编辑选股</button>
-          <button className="primary" onClick={() => openStrategy("trading")}>编辑交易</button>
+          <button className="ghost" onClick={() => openStrategy("selection")}>股票池与排序</button>
+          <button className="primary" onClick={() => openStrategy("trading")}>交易规则</button>
         </div>
       </div>
       <div className="strategy-management-workbench">
@@ -978,7 +981,7 @@ function StrategyResearchPage({ settings, setSettings, strategyRecord, openStrat
                   </label>
                 </div>
               </div>
-              <button className="primary" onClick={() => openStrategy("trading")}>编辑交易策略</button>
+              <button className="primary" onClick={() => openStrategy("trading")}>编辑交易规则</button>
             </div>
             <div className="flow-column rules">
               <span>组合规则</span>
@@ -1103,6 +1106,20 @@ const indicatorLabels = {
   rsi: "RSI",
   macd: "MACD",
   bollinger: "布林带",
+  ma_stack: "均线多头",
+  volume_vs_ma: "成交量/均量",
+  volume_max_vs_ma: "区间最大量",
+  return_between: "区间收益",
+  kline_up_ratio: "阳线优势",
+  consecutive_up: "连续阳线",
+  bullish_engulfing: "阳包阴",
+  long_lower_shadow: "大长腿",
+  body_amplitude: "实体振幅",
+  range_amplitude: "区间振幅",
+  price_ma_deviation: "价格偏离均线",
+  volume_return_spike: "放量大阳",
+  volume_down_spike: "天量阴线",
+  life_line_watch: "生命线观察",
 };
 
 const operatorLabels = {

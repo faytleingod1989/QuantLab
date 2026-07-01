@@ -132,6 +132,9 @@ const indicatorOptions = [
   ["volume_max_vs_ma", "区间最大量/均量"],
   ["return_between", "区间收益率"],
   ["kline_up_ratio", "阳线优势"],
+  ["consecutive_up", "连续阳线"],
+  ["bullish_engulfing", "阳包阴"],
+  ["long_lower_shadow", "大长腿"],
   ["range_amplitude", "区间振幅"],
   ["body_amplitude", "实体振幅"],
   ["price_ma_deviation", "价格偏离均线"],
@@ -158,6 +161,9 @@ export const indicatorDefaults = {
   volume_max_vs_ma: { left: 20, right: 20, threshold: 3 },
   return_between: { left: 1, right: 60, threshold: 50, lower: -0.01, upper: 0.05 },
   kline_up_ratio: { left: 10, right: 60, threshold: 1.5 },
+  consecutive_up: { left: 4, right: 60, threshold: 1 },
+  bullish_engulfing: { left: 1, right: 60, threshold: 0 },
+  long_lower_shadow: { left: 1, right: 60, threshold: 0.45 },
   range_amplitude: { left: 20, right: 60, threshold: 0.2 },
   body_amplitude: { left: 10, right: 60, threshold: 0.1 },
   price_ma_deviation: { left: 10, right: 60, threshold: 1.02 },
@@ -332,6 +338,9 @@ function RuleNode({ title, tone, condition, onChange, onRemove }) {
     volume_vs_ma: "均量倍率",
     volume_max_vs_ma: "最大量倍率",
     kline_up_ratio: "阳/阴倍率",
+    consecutive_up: "确认阈值",
+    bullish_engulfing: "确认阈值",
+    long_lower_shadow: "下影占比",
     range_amplitude: "振幅阈值",
     body_amplitude: "最大实体阈值",
     price_ma_deviation: "均线倍率",
@@ -344,6 +353,9 @@ function RuleNode({ title, tone, condition, onChange, onRemove }) {
     volume_max_vs_ma: "统计窗口",
     return_between: "收益窗口",
     kline_up_ratio: "统计窗口",
+    consecutive_up: "连阳天数",
+    bullish_engulfing: "确认周期",
+    long_lower_shadow: "确认周期",
     range_amplitude: "统计窗口",
     body_amplitude: "统计窗口",
     price_ma_deviation: "均线周期",
@@ -354,7 +366,7 @@ function RuleNode({ title, tone, condition, onChange, onRemove }) {
     rsi: "RSI周期",
   }[indicator] || "短周期";
   const rightLabel = indicator === "life_line_watch" ? "均量周期" : "长周期";
-  const showRight = !["price_vs_ma", "rsi", "bollinger", "volume_vs_ma", "return_between", "kline_up_ratio", "range_amplitude", "body_amplitude", "price_ma_deviation", "volume_return_spike", "volume_down_spike"].includes(indicator);
+  const showRight = !["price_vs_ma", "rsi", "bollinger", "volume_vs_ma", "return_between", "kline_up_ratio", "consecutive_up", "bullish_engulfing", "long_lower_shadow", "range_amplitude", "body_amplitude", "price_ma_deviation", "volume_return_spike", "volume_down_spike"].includes(indicator);
   const showRange = ["return_between", "life_line_watch"].includes(indicator);
   const showLower = indicator === "volume_return_spike";
   const rangeLabels = {
@@ -416,7 +428,7 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
   const [showJsonPanel, setShowJsonPanel] = useState(false);
   const [selectedTemplateId, setSelectedTemplateId] = useState(strategyTemplates[0]?.id || "");
   const activeMode = mode === "selection" ? "selection" : "trading";
-  const modeTitle = activeMode === "selection" ? "选股策略" : "交易策略";
+  const modeTitle = activeMode === "selection" ? "股票池与排序" : "交易规则";
   const selectedTemplate = strategyTemplates.find((template) => template.id === selectedTemplateId) || strategyTemplates[0];
   const buyGroups = groupsForSide(strategy, "buy");
   const sellGroups = groupsForSide(strategy, "sell");
@@ -534,18 +546,18 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
           <div>
             <span className="eyebrow">可视化策略</span>
             <h2>配置「{strategy.name}」· {modeTitle}</h2>
-            <p>{activeMode === "selection" ? "先确定候选股票与排序，再交给交易策略执行。" : "编辑买入、卖出、仓位和风控规则。"}{versionInfo ? ` 当前 ${versionInfo}` : " 尚未保存版本"}</p>
+            <p>{activeMode === "selection" ? "维护股票池、排序和持仓数量等策略前置约束。" : "编辑买入、卖出、仓位和风控规则。"}{versionInfo ? ` 当前 ${versionInfo}` : " 尚未保存版本"}</p>
           </div>
           <button className="icon-button" onClick={close}><X size={20} /></button>
         </div>
         <div className="strategy-template-bar">
           <div className="strategy-mode-tabs" role="tablist" aria-label="策略编辑模块">
-            <button className={activeMode === "selection" ? "active" : ""} onClick={() => setMode?.("selection")} role="tab" aria-selected={activeMode === "selection"}>选股策略</button>
-            <button className={activeMode === "trading" ? "active" : ""} onClick={() => setMode?.("trading")} role="tab" aria-selected={activeMode === "trading"}>交易策略</button>
+            <button className={activeMode === "selection" ? "active" : ""} onClick={() => setMode?.("selection")} role="tab" aria-selected={activeMode === "selection"}>股票池与排序</button>
+            <button className={activeMode === "trading" ? "active" : ""} onClick={() => setMode?.("trading")} role="tab" aria-selected={activeMode === "trading"}>交易规则</button>
           </div>
-          <select className="strategy-template-select" value={selectedTemplateId} onChange={(event) => setSelectedTemplateId(event.target.value)} title={selectedTemplate?.description}>
+          <select className="strategy-template-select" value={selectedTemplateId} onChange={(event) => setSelectedTemplateId(event.target.value)} title={`${selectedTemplate?.description || ""} ${selectedTemplate?.strategy?.no_future_note || ""}`}>
             {strategyTemplates.map((template) => (
-              <option key={template.id} value={template.id}>{template.title}</option>
+              <option key={template.id} value={template.id}>[{template.category}] {template.title}</option>
             ))}
           </select>
           <button className="ghost" onClick={applySelectedTemplate}>套用模板</button>
@@ -560,7 +572,7 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
           {activeMode === "selection" ? (
             <section>
               <div>
-                <span>选股策略</span>
+                <span>股票池与排序</span>
                 <b>股票池、过滤与候选排序</b>
                 <small>决定候选股票如何进入交易模块。</small>
               </div>
@@ -578,7 +590,7 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
           ) : (
             <section>
               <div>
-                <span>交易策略</span>
+                <span>交易规则</span>
                 <b>买入、卖出、仓位与风控</b>
                 <small>决定信号如何执行，以及如何管理风险。</small>
               </div>
@@ -614,8 +626,8 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
           <div className="selection-editor-panel">
             <div className="rule-node source"><Database size={21} /><b>股票池</b><span>沪深 A 股 · {settings.symbols.length} 只</span></div>
             <div className="selection-flow-copy">
-              <b>选股策略只负责“谁有资格进入交易”</b>
-              <span>这里设置候选池规模、排序方式和持股上限；买入、卖出和仓位执行请切到「交易策略」。</span>
+              <b>这是完整策略的前置约束，不是单独一类策略</b>
+              <span>这里设置候选池规模、排序方式和持股上限；买入、卖出和仓位执行请切到「交易规则」。</span>
             </div>
             <div className="rule-node risk"><SlidersHorizontal size={21} /><b>候选输出</b><span>最多 {strategy.max_hold_num || "不限"} 只 · {strategy.sort_window || 20} 日排序窗口</span></div>
           </div>
@@ -695,7 +707,7 @@ export function StrategyModal({ settings, setSettings, onSave, saving, versionIn
           {activeMode === "selection" ? (
             <>
               <span>候选池先过滤再排序</span>
-              <span>输出给交易策略执行</span>
+              <span>输出给交易规则执行</span>
               <span>股票池来自数据中心</span>
             </>
           ) : (

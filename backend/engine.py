@@ -116,6 +116,19 @@ def _condition(frame: pd.DataFrame, rule: RuleCondition) -> pd.Series:
         up_days = (frame["close"] > frame["open"]).rolling(rule.left).sum()
         down_days = (frame["close"] < frame["open"]).rolling(rule.left).sum()
         return up_days > down_days * float(rule.threshold)
+    if rule.indicator == "consecutive_up":
+        up_days = frame["close"] > frame["open"]
+        return up_days.rolling(rule.left).sum() >= rule.left
+    if rule.indicator == "bullish_engulfing":
+        current_up = frame["close"] > frame["open"]
+        previous_down = frame["close"].shift(1) < frame["open"].shift(1)
+        covers_previous_body = (frame["close"] >= frame["open"].shift(1)) & (frame["open"] <= frame["close"].shift(1))
+        return current_up & previous_down & covers_previous_body
+    if rule.indicator == "long_lower_shadow":
+        total_range = (frame["high"] - frame["low"]).replace(0, np.nan)
+        lower_shadow = pd.concat([frame["open"], frame["close"]], axis=1).min(axis=1) - frame["low"]
+        lower_shadow_ratio = lower_shadow / total_range
+        return lower_shadow_ratio > rule.threshold if rule.operator == "above" else lower_shadow_ratio < rule.threshold
     if rule.indicator == "range_amplitude":
         recent_high = frame["high"].rolling(rule.left).max()
         recent_low = frame["low"].rolling(rule.left).min().replace(0, np.nan)
