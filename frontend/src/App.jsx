@@ -1326,7 +1326,7 @@ function App() {
         }}
         serviceOnline={source?.available !== false}
       />
-      <main className="main-view">
+      <main className={`main-view ${activeView === "data" ? "data-main-view" : ""}`}>
         <Topbar
           title={viewTitle}
           subtitle={viewSubtitle}
