@@ -134,6 +134,15 @@ class FakeSecurityMasterAkshare:
         )
 
 
+class FakeSecurityMasterCodeNameAkshare(FakeSecurityMasterAkshare):
+    @staticmethod
+    def stock_info_sz_name_code():
+        frame = FakeSecurityMasterAkshare.stock_info_sz_name_code().copy()
+        name_column = next(column for column in frame.columns if "简称" in column)
+        frame[name_column] = ["300750"]
+        return frame
+
+
 def test_prepare_market_frame_enriches_reproducibility_fields():
     frame = prepare_market_frame(
         pd.DataFrame(
@@ -219,6 +228,12 @@ def test_akshare_security_master_normalizes_active_and_delisted_records():
     assert by_symbol["920000.BJ"]["exchange"] == "BJ"
     assert by_symbol["600001.SH"]["status"] == "delisted"
     assert by_symbol["000003.SZ"]["delisted_date"] == "2002-06-14"
+
+
+def test_akshare_security_master_uses_all_a_names_as_fallback():
+    records = fetch_akshare_security_master(client=FakeSecurityMasterCodeNameAkshare)
+    by_symbol = {record["symbol"]: record for record in records}
+    assert by_symbol["300750.SZ"]["name"] == "宁德时代"
 
 
 def test_limit_rates_cover_st_star_chinext_and_bj():

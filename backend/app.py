@@ -431,6 +431,7 @@ def market_bars(symbol: str, start_date: str | None = None, end_date: str | None
                 "high": row["high"],
                 "low": row["low"],
                 "close": row["close"],
+                "prev_close": row.get("prev_close"),
                 "volume": row["volume"],
                 "amount": row["amount"],
                 "name": row.get("name") or normalized,

@@ -583,14 +583,14 @@ def fetch_akshare_security_master(client=None) -> list[dict]:
             name = str(row.get("name", "")).strip()
             exchange = _infer_exchange_from_code(code)
             if (
-                exchange != "SH"
-                or not code.startswith(("688", "689"))
+                exchange not in {"SH", "SZ", "BJ"}
                 or not name
                 or "退" in name
             ):
                 continue
             symbol = _market_symbol(code, exchange)
             if symbol in records:
+                records[symbol]["name"] = name
                 continue
             put(
                 {

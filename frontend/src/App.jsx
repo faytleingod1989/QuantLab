@@ -76,6 +76,33 @@ const toChartNumber = (value, fallback = 0) => {
   return Number.isFinite(number) ? number : fallback;
 };
 
+const normalizedStockName = (stock) => {
+  const symbol = String(stock?.symbol || "");
+  const name = String(stock?.name || "").trim();
+  return name && name !== symbol && !/^\d{6}(\.(SH|SZ|BJ))?$/i.test(name) ? name : "";
+};
+
+const stockDisplayName = (stock, fallbackSymbol = "") => {
+  const symbol = String(stock?.symbol || fallbackSymbol || "");
+  const name = normalizedStockName(stock);
+  return name ? `${symbol} · ${name}` : symbol;
+};
+
+const priceChangeMeta = (bar, previousBar) => {
+  if (!bar) return { change: 0, percent: 0, text: "--", className: "flat" };
+  const close = toChartNumber(bar.close);
+  const previousClose = toChartNumber(bar.prev_close, toChartNumber(previousBar?.close, toChartNumber(bar.open)));
+  const change = close - previousClose;
+  const percent = previousClose ? (change / previousClose) * 100 : 0;
+  const sign = change > 0 ? "+" : "";
+  return {
+    change,
+    percent,
+    text: `${sign}${change.toFixed(2)} / ${sign}${percent.toFixed(2)}%`,
+    className: change > 0 ? "up" : change < 0 ? "down" : "flat",
+  };
+};
+
 const clampNumber = (value, min, max) => Math.min(max, Math.max(min, value));
 
 const chartIndexFromPointer = (event, width, padding, count) => {
@@ -115,6 +142,8 @@ function KLineSvg({ bars, hoveredIndex, onHoverIndex, onLeave, onWheel }) {
   const lastBar = visibleBars[visibleBars.length - 1];
   const lastClose = toChartNumber(lastBar?.close);
   const hoveredBar = hoveredIndex == null ? null : visibleBars[hoveredIndex];
+  const hoveredPreviousBar = hoveredIndex == null ? null : visibleBars[hoveredIndex - 1];
+  const hoveredChange = priceChangeMeta(hoveredBar, hoveredPreviousBar);
   const hoveredX = hoveredBar ? padding.left + hoveredIndex * step + step / 2 : null;
   const hoveredClose = hoveredBar ? toChartNumber(hoveredBar.close) : null;
   const tooltipX = hoveredX == null ? padding.left : clampNumber(hoveredX + 12, padding.left + 6, width - padding.right - 180);
@@ -156,11 +185,12 @@ function KLineSvg({ bars, hoveredIndex, onHoverIndex, onLeave, onWheel }) {
           <line className="chart-crosshair muted" x1={padding.left} x2={width - padding.right} y1={y(hoveredClose)} y2={y(hoveredClose)} />
           <circle cx={hoveredX} cy={y(hoveredClose)} r="4" />
           <g className="chart-tooltip-box" transform={`translate(${tooltipX} ${padding.top + 8})`}>
-            <rect width="168" height="76" rx="5" />
+            <rect width="176" height="92" rx="5" />
             <text x="10" y="18">{hoveredBar.date}</text>
             <text x="10" y="36">开 {toChartNumber(hoveredBar.open).toFixed(2)}  高 {toChartNumber(hoveredBar.high).toFixed(2)}</text>
             <text x="10" y="54">低 {toChartNumber(hoveredBar.low).toFixed(2)}  收 {toChartNumber(hoveredBar.close).toFixed(2)}</text>
-            <text x="10" y="70">量 {compactNumber(hoveredBar.volume)}</text>
+            <text className={`price-change-${hoveredChange.className}`} x="10" y="72">涨跌 {hoveredChange.text}</text>
+            <text x="10" y="88">量 {compactNumber(hoveredBar.volume)}</text>
           </g>
         </g>
       ) : null}
@@ -308,6 +338,9 @@ function DataCenterPage({
     : clampNumber(hoveredBarIndex, 0, chartBars.length - 1);
   const hoveredBar = safeHoveredIndex == null ? null : chartBars[safeHoveredIndex];
   const displayBar = hoveredBar || chartBars[chartBars.length - 1] || latestBar;
+  const displayPreviousBar = hoveredBar ? chartBars[safeHoveredIndex - 1] : chartBars[chartBars.length - 2];
+  const displayChange = priceChangeMeta(displayBar, displayPreviousBar);
+  const activeStockLabel = stockDisplayName(activeStock, selectedSymbol);
   const chartRangeLabel = chartBars.length
     ? `${chartBars[0].date} → ${chartBars[chartBars.length - 1].date} · ${chartBars.length}根`
     : "等待数据";
@@ -373,8 +406,8 @@ function DataCenterPage({
                 onClick={() => setSelectedSymbol(stock.symbol)}
               >
                 <span>
-                  <b>{stock.name || stock.symbol}</b>
-                  <small>{stock.symbol} · {stock.board || stock.exchange || "未分类"}</small>
+                  <b>{stockDisplayName(stock)}</b>
+                  <small>{stock.board || stock.exchange || "未分类"}</small>
                 </span>
                 <em>{stock.exchange}</em>
               </button>
@@ -388,8 +421,8 @@ function DataCenterPage({
               <div className="chart-head-actions">
                 <span>
                   {displayBar
-                    ? `${activeStock?.name || selectedSymbol || "未选择"} · ${displayBar.date} · 开 ${toChartNumber(displayBar.open).toFixed(2)} 高 ${toChartNumber(displayBar.high).toFixed(2)} 低 ${toChartNumber(displayBar.low).toFixed(2)} 收 ${toChartNumber(displayBar.close).toFixed(2)}`
-                    : `${activeStock?.name || selectedSymbol || "未选择"} ${selectedSymbol ? `· ${selectedSymbol}` : ""}`}
+                    ? `${activeStockLabel || "未选择"} · ${displayBar.date} · 开 ${toChartNumber(displayBar.open).toFixed(2)} 高 ${toChartNumber(displayBar.high).toFixed(2)} 低 ${toChartNumber(displayBar.low).toFixed(2)} 收 ${toChartNumber(displayBar.close).toFixed(2)} · 涨跌 ${displayChange.text}`
+                    : activeStockLabel || "未选择"}
                 </span>
                 <button className="text-button" onClick={() => setChartVisibleCount(60)} disabled={!localBars.length}>近60</button>
                 <button className="text-button" onClick={() => setChartVisibleCount(120)} disabled={!localBars.length}>近120</button>
