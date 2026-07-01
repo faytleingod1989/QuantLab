@@ -136,6 +136,36 @@ def test_repository_persists_market_daily_warehouse(tmp_path):
     assert summary["start_date"] == "2024-01-02"
 
 
+def test_market_bars_reads_local_warehouse(monkeypatch):
+    from backend import app as app_module
+
+    class FakeRepository:
+        def list_market_daily_bars(self, symbols, start_date, end_date):
+            assert symbols == ["600519.SH"]
+            assert start_date == "2024-01-02"
+            assert end_date == "2024-01-05"
+            return [
+                {
+                    "trade_date": "2024-01-02",
+                    "open": 10.0,
+                    "high": 10.5,
+                    "low": 9.8,
+                    "close": 10.2,
+                    "volume": 100000,
+                    "amount": 1020000,
+                    "name": "贵州茅台",
+                }
+            ]
+
+    monkeypatch.setattr(app_module, "repository", FakeRepository())
+
+    payload = app_module.market_bars("600519.SH", "2024-01-02", "2024-01-05")
+
+    assert payload["symbol"] == "600519.SH"
+    assert payload["bars"][0]["date"] == "2024-01-02"
+    assert payload["bars"][0]["close"] == 10.2
+
+
 def test_repository_persists_industry_history(tmp_path):
     repository = BacktestRepository(tmp_path / "quantlab.db")
     repository.upsert_industry_history(

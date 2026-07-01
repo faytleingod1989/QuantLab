@@ -63,6 +63,112 @@ function PageCard({ title, value, note, action }) {
   );
 }
 
+const compactNumber = (value) => {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return "--";
+  if (Math.abs(number) >= 100000000) return `${(number / 100000000).toFixed(2)}亿`;
+  if (Math.abs(number) >= 10000) return `${(number / 10000).toFixed(1)}万`;
+  return `${Math.round(number)}`;
+};
+
+const toChartNumber = (value, fallback = 0) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+};
+
+function ChartEmptyState({ text }) {
+  return <div className="warehouse-chart-empty">{text}</div>;
+}
+
+function KLineSvg({ bars }) {
+  const visibleBars = (bars || []).slice(-110);
+  if (!visibleBars.length) return <ChartEmptyState text="暂无本地日 K 数据，请先补齐该股票行情。" />;
+  const prices = visibleBars.flatMap((bar) => [
+    toChartNumber(bar.high),
+    toChartNumber(bar.low),
+    toChartNumber(bar.open),
+    toChartNumber(bar.close),
+  ]).filter((item) => Number.isFinite(item) && item > 0);
+  if (!prices.length) return <ChartEmptyState text="本地日线存在，但没有可绘制的有效价格。" />;
+  const minPrice = Math.min(...prices);
+  const maxPrice = Math.max(...prices);
+  const range = maxPrice - minPrice || Math.max(maxPrice * 0.02, 1);
+  const width = 900;
+  const height = 320;
+  const padding = { top: 18, right: 54, bottom: 28, left: 18 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const step = plotWidth / Math.max(visibleBars.length, 1);
+  const candleWidth = Math.max(3, Math.min(10, step * 0.58));
+  const y = (price) => padding.top + ((maxPrice - price) / range) * plotHeight;
+  const lastBar = visibleBars[visibleBars.length - 1];
+  const lastClose = toChartNumber(lastBar?.close);
+  return (
+    <svg className="warehouse-kline-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="日 K 线">
+      <g className="chart-grid">
+        {[0, 0.25, 0.5, 0.75, 1].map((ratio) => (
+          <line key={ratio} x1={padding.left} x2={width - padding.right} y1={padding.top + ratio * plotHeight} y2={padding.top + ratio * plotHeight} />
+        ))}
+      </g>
+      {visibleBars.map((bar, index) => {
+        const open = toChartNumber(bar.open);
+        const close = toChartNumber(bar.close);
+        const high = toChartNumber(bar.high);
+        const low = toChartNumber(bar.low);
+        const x = padding.left + index * step + step / 2;
+        const up = close >= open;
+        const bodyTop = Math.min(y(open), y(close));
+        const bodyHeight = Math.max(1.4, Math.abs(y(open) - y(close)));
+        return (
+          <g key={`${bar.date}-${index}`} className={up ? "candle-up" : "candle-down"}>
+            <line x1={x} x2={x} y1={y(high)} y2={y(low)} />
+            <rect x={x - candleWidth / 2} y={bodyTop} width={candleWidth} height={bodyHeight} rx="1.2" />
+          </g>
+        );
+      })}
+      <line className="last-price-line" x1={padding.left} x2={width - padding.right} y1={y(lastClose)} y2={y(lastClose)} />
+      <text className="chart-axis-label" x={width - padding.right + 8} y={y(maxPrice) + 4}>{maxPrice.toFixed(2)}</text>
+      <text className="chart-axis-label" x={width - padding.right + 8} y={y(lastClose) + 4}>{lastClose.toFixed(2)}</text>
+      <text className="chart-axis-label" x={width - padding.right + 8} y={y(minPrice) + 4}>{minPrice.toFixed(2)}</text>
+      <text className="chart-date-label" x={padding.left} y={height - 8}>{visibleBars[0]?.date}</text>
+      <text className="chart-date-label" x={width - padding.right} y={height - 8} textAnchor="end">{lastBar?.date}</text>
+    </svg>
+  );
+}
+
+function VolumeSvg({ bars }) {
+  const visibleBars = (bars || []).slice(-110);
+  if (!visibleBars.length) return <ChartEmptyState text="暂无成交量数据。" />;
+  const maxVolume = Math.max(...visibleBars.map((bar) => toChartNumber(bar.volume)), 1);
+  const width = 900;
+  const height = 180;
+  const padding = { top: 18, right: 54, bottom: 24, left: 18 };
+  const plotWidth = width - padding.left - padding.right;
+  const plotHeight = height - padding.top - padding.bottom;
+  const step = plotWidth / Math.max(visibleBars.length, 1);
+  const barWidth = Math.max(2, Math.min(9, step * 0.62));
+  return (
+    <svg className="warehouse-volume-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="成交量">
+      <g className="chart-grid">
+        {[0, 0.5, 1].map((ratio) => (
+          <line key={ratio} x1={padding.left} x2={width - padding.right} y1={padding.top + ratio * plotHeight} y2={padding.top + ratio * plotHeight} />
+        ))}
+      </g>
+      {visibleBars.map((bar, index) => {
+        const volume = toChartNumber(bar.volume);
+        const barHeight = Math.max(1, (volume / maxVolume) * plotHeight);
+        const x = padding.left + index * step + step / 2 - barWidth / 2;
+        const y = padding.top + plotHeight - barHeight;
+        const up = toChartNumber(bar.close) >= toChartNumber(bar.open);
+        return <rect key={`${bar.date}-${index}`} className={up ? "volume-up" : "volume-down"} x={x} y={y} width={barWidth} height={barHeight} rx="1.2" />;
+      })}
+      <text className="chart-axis-label" x={width - padding.right + 8} y={padding.top + 4}>{compactNumber(maxVolume)}</text>
+      <text className="chart-date-label" x={padding.left} y={height - 7}>{visibleBars[0]?.date}</text>
+      <text className="chart-date-label" x={width - padding.right} y={height - 7} textAnchor="end">{visibleBars[visibleBars.length - 1]?.date}</text>
+    </svg>
+  );
+}
+
 function DataCenterPage({
   datasets,
   securities,
@@ -78,6 +184,140 @@ function DataCenterPage({
   onSelectDataset,
   onDeleteDataset,
 }) {
+  const [stockQuery, setStockQuery] = useState("");
+  const [selectedSymbol, setSelectedSymbol] = useState("");
+  const [barsState, setBarsState] = useState({ loading: false, error: "", bars: [], symbol: "" });
+  const localWarehouseStocks = useMemo(() => (
+    securities
+      .filter((item) => {
+        const exchange = String(item.exchange || "").toUpperCase();
+        return ["SH", "SZ", "BJ"].includes(exchange) && item.status !== "delisted" && item.symbol !== settings.benchmark;
+      })
+      .sort((left, right) => String(left.symbol || "").localeCompare(String(right.symbol || "")))
+  ), [securities, settings.benchmark]);
+  const visibleWarehouseStocks = useMemo(() => {
+    const query = stockQuery.trim().toLowerCase();
+    const matched = query
+      ? localWarehouseStocks.filter((item) => (
+        String(item.symbol || "").toLowerCase().includes(query)
+        || String(item.name || "").toLowerCase().includes(query)
+        || String(item.board || "").toLowerCase().includes(query)
+        || String(item.industry || "").toLowerCase().includes(query)
+      ))
+      : localWarehouseStocks;
+    return matched.slice(0, 320);
+  }, [localWarehouseStocks, stockQuery]);
+  const activeStock = useMemo(
+    () => localWarehouseStocks.find((item) => item.symbol === selectedSymbol) || visibleWarehouseStocks[0],
+    [localWarehouseStocks, selectedSymbol, visibleWarehouseStocks]
+  );
+  useEffect(() => {
+    if (!localWarehouseStocks.length) return;
+    if (!selectedSymbol || !localWarehouseStocks.some((item) => item.symbol === selectedSymbol)) {
+      setSelectedSymbol(localWarehouseStocks[0].symbol);
+    }
+  }, [localWarehouseStocks, selectedSymbol]);
+  useEffect(() => {
+    if (!selectedSymbol) return undefined;
+    const controller = new AbortController();
+    const params = new URLSearchParams();
+    if (settings.start_date) params.set("start_date", settings.start_date);
+    if (settings.end_date) params.set("end_date", settings.end_date);
+    setBarsState({ loading: true, error: "", bars: [], symbol: selectedSymbol });
+    fetch(`${API}/market/bars/${encodeURIComponent(selectedSymbol)}?${params.toString()}`, { signal: controller.signal })
+      .then((response) => response.ok ? response.json() : Promise.reject(new Error("无法读取本地日线数据")))
+      .then((payload) => setBarsState({ loading: false, error: "", bars: payload.bars || [], symbol: payload.symbol || selectedSymbol }))
+      .catch((error) => {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        setBarsState({ loading: false, error: errorMessage(error, "无法读取本地日线数据"), bars: [], symbol: selectedSymbol });
+      });
+    return () => controller.abort();
+  }, [selectedSymbol, settings.start_date, settings.end_date]);
+  const localBars = barsState.symbol === selectedSymbol ? barsState.bars : [];
+  const latestBar = localBars[localBars.length - 1];
+  const localTaskCovered = Number(allMarketSyncTask?.covered || allMarketSyncTask?.coverage?.covered || 0);
+  const localTaskExpected = Number(allMarketSyncTask?.expected || allMarketSyncTask?.coverage?.expected || 0);
+  const localTaskProgress = localTaskExpected ? Math.round((localTaskCovered / localTaskExpected) * 100) : 0;
+  return (
+    <section className="view-page data-center-page">
+      <div className="view-hero data-center-hero">
+        <div>
+          <span>DATA CENTER</span>
+          <h2>本地行情仓库</h2>
+          <p>只保留真正有用的工作区：左侧浏览本地股票，右侧查看当前时间范围内的日 K 线和成交量。快照选择、删除和补齐仍在数据管理弹窗里处理。</p>
+        </div>
+        <div className="view-actions">
+          <button className="ghost" onClick={syncingAll ? onCancelSyncAll : onSyncAll} disabled={!syncingAll && !source?.akshare_available}>
+            {syncingAll ? "停止补齐" : "同步沪深全A"}
+          </button>
+          <button className="primary" onClick={openData}>打开数据管理</button>
+        </div>
+      </div>
+      {allMarketSyncTask?.status && allMarketSyncTask.status !== "idle" ? (
+        <div className="sync-progress-panel data-center-sync">
+          <div>
+            <b>全A补齐任务：{allMarketSyncTask.status}</b>
+            <span>第 {allMarketSyncTask.batch_count || 0} 批 · 覆盖 {localTaskCovered}/{localTaskExpected || "?"} · {localTaskProgress}%</span>
+          </div>
+          <progress value={localTaskCovered} max={localTaskExpected || 1} />
+        </div>
+      ) : null}
+      <div className="data-center-workbench">
+        <aside className="warehouse-stock-panel">
+          <div className="panel-head">
+            <b>数据里的个股股票</b>
+            <span>{localWarehouseStocks.length} 只</span>
+          </div>
+          <label className="warehouse-search">
+            <span>搜索股票</span>
+            <input
+              value={stockQuery}
+              onChange={(event) => setStockQuery(event.target.value)}
+              placeholder="代码、名称、板块、行业"
+            />
+          </label>
+          <div className="warehouse-list-meta">
+            显示 {visibleWarehouseStocks.length} / {localWarehouseStocks.length} 只，时间 {settings.start_date} → {settings.end_date}
+          </div>
+          <div className="warehouse-stock-list">
+            {visibleWarehouseStocks.length ? visibleWarehouseStocks.map((stock) => (
+              <button
+                key={stock.symbol}
+                className={stock.symbol === selectedSymbol ? "selected" : ""}
+                onClick={() => setSelectedSymbol(stock.symbol)}
+              >
+                <span>
+                  <b>{stock.name || stock.symbol}</b>
+                  <small>{stock.symbol} · {stock.board || stock.exchange || "未分类"}</small>
+                </span>
+                <em>{stock.exchange}</em>
+              </button>
+            )) : <ChartEmptyState text="没有匹配的股票。" />}
+          </div>
+        </aside>
+        <section className="warehouse-chart-area">
+          <article className="warehouse-chart-card kline-card">
+            <div className="panel-head">
+              <b>日 K 图</b>
+              <span>{activeStock?.name || selectedSymbol || "未选择"} {selectedSymbol ? `· ${selectedSymbol}` : ""}</span>
+            </div>
+            <div className="warehouse-chart-body">
+              {barsState.loading ? <ChartEmptyState text="正在读取本地日线…" /> : barsState.error ? <ChartEmptyState text={barsState.error} /> : <KLineSvg bars={localBars} />}
+            </div>
+          </article>
+          <article className="warehouse-chart-card volume-card">
+            <div className="panel-head">
+              <b>交易量</b>
+              <span>{latestBar ? `${latestBar.date} · ${compactNumber(latestBar.volume)}` : "等待数据"}</span>
+            </div>
+            <div className="warehouse-chart-body volume-body">
+              {barsState.loading ? <ChartEmptyState text="正在读取成交量…" /> : barsState.error ? <ChartEmptyState text={barsState.error} /> : <VolumeSvg bars={localBars} />}
+            </div>
+          </article>
+        </section>
+      </div>
+    </section>
+  );
   const selectedDataset = datasets.find((item) => item.id === settings.dataset_id);
   const syncableAllMarketCount = securities.filter((item) => (
     isSyncableShSzSecurity(item) && item.symbol !== settings.benchmark

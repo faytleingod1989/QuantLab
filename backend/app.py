@@ -413,6 +413,33 @@ def list_datasets() -> list[dict]:
     return repository.list_datasets()
 
 
+@app.get("/api/market/bars/{symbol}")
+def market_bars(symbol: str, start_date: str | None = None, end_date: str | None = None) -> dict:
+    try:
+        normalized = normalize_symbol(symbol)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    records = repository.list_market_daily_bars([normalized], start_date, end_date)
+    return {
+        "symbol": normalized,
+        "start_date": start_date,
+        "end_date": end_date,
+        "bars": [
+            {
+                "date": row["trade_date"],
+                "open": row["open"],
+                "high": row["high"],
+                "low": row["low"],
+                "close": row["close"],
+                "volume": row["volume"],
+                "amount": row["amount"],
+                "name": row.get("name") or normalized,
+            }
+            for row in records
+        ],
+    }
+
+
 @app.post("/api/market/coverage")
 def market_coverage(payload: MarketCoverageRequest) -> dict:
     pool_symbols = {
