@@ -76,12 +76,23 @@ const toChartNumber = (value, fallback = 0) => {
   return Number.isFinite(number) ? number : fallback;
 };
 
+const clampNumber = (value, min, max) => Math.min(max, Math.max(min, value));
+
+const chartIndexFromPointer = (event, width, padding, count) => {
+  if (!count) return null;
+  const rect = event.currentTarget.getBoundingClientRect();
+  const localX = (event.clientX - rect.left) * (width / Math.max(rect.width, 1));
+  const plotWidth = width - padding.left - padding.right;
+  const step = plotWidth / Math.max(count, 1);
+  return clampNumber(Math.round((localX - padding.left - step / 2) / step), 0, count - 1);
+};
+
 function ChartEmptyState({ text }) {
   return <div className="warehouse-chart-empty">{text}</div>;
 }
 
-function KLineSvg({ bars }) {
-  const visibleBars = (bars || []).slice(-110);
+function KLineSvg({ bars, hoveredIndex, onHoverIndex, onLeave, onWheel }) {
+  const visibleBars = bars || [];
   if (!visibleBars.length) return <ChartEmptyState text="暂无本地日 K 数据，请先补齐该股票行情。" />;
   const prices = visibleBars.flatMap((bar) => [
     toChartNumber(bar.high),
@@ -103,8 +114,20 @@ function KLineSvg({ bars }) {
   const y = (price) => padding.top + ((maxPrice - price) / range) * plotHeight;
   const lastBar = visibleBars[visibleBars.length - 1];
   const lastClose = toChartNumber(lastBar?.close);
+  const hoveredBar = hoveredIndex == null ? null : visibleBars[hoveredIndex];
+  const hoveredX = hoveredBar ? padding.left + hoveredIndex * step + step / 2 : null;
+  const hoveredClose = hoveredBar ? toChartNumber(hoveredBar.close) : null;
+  const tooltipX = hoveredX == null ? padding.left : clampNumber(hoveredX + 12, padding.left + 6, width - padding.right - 180);
   return (
-    <svg className="warehouse-kline-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="日 K 线">
+    <svg
+      className="warehouse-kline-svg chart-interactive"
+      viewBox={`0 0 ${width} ${height}`}
+      role="img"
+      aria-label="日 K 线"
+      onMouseMove={(event) => onHoverIndex?.(chartIndexFromPointer(event, width, padding, visibleBars.length))}
+      onMouseLeave={onLeave}
+      onWheel={onWheel}
+    >
       <g className="chart-grid">
         {[0, 0.25, 0.5, 0.75, 1].map((ratio) => (
           <line key={ratio} x1={padding.left} x2={width - padding.right} y1={padding.top + ratio * plotHeight} y2={padding.top + ratio * plotHeight} />
@@ -122,11 +145,25 @@ function KLineSvg({ bars }) {
         return (
           <g key={`${bar.date}-${index}`} className={up ? "candle-up" : "candle-down"}>
             <line x1={x} x2={x} y1={y(high)} y2={y(low)} />
-            <rect x={x - candleWidth / 2} y={bodyTop} width={candleWidth} height={bodyHeight} rx="1.2" />
+            <rect className={index === hoveredIndex ? "hovered-candle" : ""} x={x - candleWidth / 2} y={bodyTop} width={candleWidth} height={bodyHeight} rx="1.2" />
           </g>
         );
       })}
       <line className="last-price-line" x1={padding.left} x2={width - padding.right} y1={y(lastClose)} y2={y(lastClose)} />
+      {hoveredBar ? (
+        <g className="chart-hover-layer">
+          <line className="chart-crosshair" x1={hoveredX} x2={hoveredX} y1={padding.top} y2={height - padding.bottom} />
+          <line className="chart-crosshair muted" x1={padding.left} x2={width - padding.right} y1={y(hoveredClose)} y2={y(hoveredClose)} />
+          <circle cx={hoveredX} cy={y(hoveredClose)} r="4" />
+          <g className="chart-tooltip-box" transform={`translate(${tooltipX} ${padding.top + 8})`}>
+            <rect width="168" height="76" rx="5" />
+            <text x="10" y="18">{hoveredBar.date}</text>
+            <text x="10" y="36">开 {toChartNumber(hoveredBar.open).toFixed(2)}  高 {toChartNumber(hoveredBar.high).toFixed(2)}</text>
+            <text x="10" y="54">低 {toChartNumber(hoveredBar.low).toFixed(2)}  收 {toChartNumber(hoveredBar.close).toFixed(2)}</text>
+            <text x="10" y="70">量 {compactNumber(hoveredBar.volume)}</text>
+          </g>
+        </g>
+      ) : null}
       <text className="chart-axis-label" x={width - padding.right + 8} y={y(maxPrice) + 4}>{maxPrice.toFixed(2)}</text>
       <text className="chart-axis-label" x={width - padding.right + 8} y={y(lastClose) + 4}>{lastClose.toFixed(2)}</text>
       <text className="chart-axis-label" x={width - padding.right + 8} y={y(minPrice) + 4}>{minPrice.toFixed(2)}</text>
@@ -136,8 +173,8 @@ function KLineSvg({ bars }) {
   );
 }
 
-function VolumeSvg({ bars }) {
-  const visibleBars = (bars || []).slice(-110);
+function VolumeSvg({ bars, hoveredIndex, onHoverIndex, onLeave, onWheel }) {
+  const visibleBars = bars || [];
   if (!visibleBars.length) return <ChartEmptyState text="暂无成交量数据。" />;
   const maxVolume = Math.max(...visibleBars.map((bar) => toChartNumber(bar.volume)), 1);
   const width = 900;
@@ -147,8 +184,18 @@ function VolumeSvg({ bars }) {
   const plotHeight = height - padding.top - padding.bottom;
   const step = plotWidth / Math.max(visibleBars.length, 1);
   const barWidth = Math.max(2, Math.min(9, step * 0.62));
+  const hoveredBar = hoveredIndex == null ? null : visibleBars[hoveredIndex];
+  const hoveredX = hoveredBar ? padding.left + hoveredIndex * step + step / 2 : null;
   return (
-    <svg className="warehouse-volume-svg" viewBox={`0 0 ${width} ${height}`} role="img" aria-label="成交量">
+    <svg
+      className="warehouse-volume-svg chart-interactive"
+      viewBox={`0 0 ${width} ${height}`}
+      role="img"
+      aria-label="成交量"
+      onMouseMove={(event) => onHoverIndex?.(chartIndexFromPointer(event, width, padding, visibleBars.length))}
+      onMouseLeave={onLeave}
+      onWheel={onWheel}
+    >
       <g className="chart-grid">
         {[0, 0.5, 1].map((ratio) => (
           <line key={ratio} x1={padding.left} x2={width - padding.right} y1={padding.top + ratio * plotHeight} y2={padding.top + ratio * plotHeight} />
@@ -160,8 +207,18 @@ function VolumeSvg({ bars }) {
         const x = padding.left + index * step + step / 2 - barWidth / 2;
         const y = padding.top + plotHeight - barHeight;
         const up = toChartNumber(bar.close) >= toChartNumber(bar.open);
-        return <rect key={`${bar.date}-${index}`} className={up ? "volume-up" : "volume-down"} x={x} y={y} width={barWidth} height={barHeight} rx="1.2" />;
+        return <rect key={`${bar.date}-${index}`} className={`${up ? "volume-up" : "volume-down"} ${index === hoveredIndex ? "hovered-volume" : ""}`} x={x} y={y} width={barWidth} height={barHeight} rx="1.2" />;
       })}
+      {hoveredBar ? (
+        <g className="chart-hover-layer">
+          <line className="chart-crosshair" x1={hoveredX} x2={hoveredX} y1={padding.top} y2={height - padding.bottom} />
+          <g className="chart-tooltip-box volume-tooltip" transform={`translate(${clampNumber(hoveredX + 12, padding.left + 6, width - padding.right - 150)} ${padding.top + 8})`}>
+            <rect width="138" height="42" rx="5" />
+            <text x="10" y="18">{hoveredBar.date}</text>
+            <text x="10" y="34">量 {compactNumber(hoveredBar.volume)}</text>
+          </g>
+        </g>
+      ) : null}
       <text className="chart-axis-label" x={width - padding.right + 8} y={padding.top + 4}>{compactNumber(maxVolume)}</text>
       <text className="chart-date-label" x={padding.left} y={height - 7}>{visibleBars[0]?.date}</text>
       <text className="chart-date-label" x={width - padding.right} y={height - 7} textAnchor="end">{visibleBars[visibleBars.length - 1]?.date}</text>
@@ -187,6 +244,8 @@ function DataCenterPage({
   const [stockQuery, setStockQuery] = useState("");
   const [selectedSymbol, setSelectedSymbol] = useState("");
   const [barsState, setBarsState] = useState({ loading: false, error: "", bars: [], symbol: "" });
+  const [chartVisibleCount, setChartVisibleCount] = useState(110);
+  const [hoveredBarIndex, setHoveredBarIndex] = useState(null);
   const localWarehouseStocks = useMemo(() => (
     securities
       .filter((item) => {
@@ -233,8 +292,35 @@ function DataCenterPage({
       });
     return () => controller.abort();
   }, [selectedSymbol, settings.start_date, settings.end_date]);
+  useEffect(() => {
+    setChartVisibleCount(110);
+    setHoveredBarIndex(null);
+  }, [selectedSymbol, settings.start_date, settings.end_date]);
   const localBars = barsState.symbol === selectedSymbol ? barsState.bars : [];
   const latestBar = localBars[localBars.length - 1];
+  const minimumVisibleCount = localBars.length ? Math.min(30, localBars.length) : 1;
+  const normalizedVisibleCount = localBars.length
+    ? clampNumber(chartVisibleCount, minimumVisibleCount, localBars.length)
+    : chartVisibleCount;
+  const chartBars = localBars.slice(-normalizedVisibleCount);
+  const safeHoveredIndex = hoveredBarIndex == null || !chartBars.length
+    ? null
+    : clampNumber(hoveredBarIndex, 0, chartBars.length - 1);
+  const hoveredBar = safeHoveredIndex == null ? null : chartBars[safeHoveredIndex];
+  const displayBar = hoveredBar || chartBars[chartBars.length - 1] || latestBar;
+  const chartRangeLabel = chartBars.length
+    ? `${chartBars[0].date} → ${chartBars[chartBars.length - 1].date} · ${chartBars.length}根`
+    : "等待数据";
+  const handleChartWheel = (event) => {
+    event.preventDefault();
+    if (!localBars.length) return;
+    const direction = event.deltaY > 0 ? 1 : -1;
+    setChartVisibleCount((current) => {
+      const base = clampNumber(Number(current) || 110, minimumVisibleCount, localBars.length);
+      const step = Math.max(5, Math.round(base * 0.16));
+      return clampNumber(base + direction * step, minimumVisibleCount, localBars.length);
+    });
+  };
   const localTaskCovered = Number(allMarketSyncTask?.covered || allMarketSyncTask?.coverage?.covered || 0);
   const localTaskExpected = Number(allMarketSyncTask?.expected || allMarketSyncTask?.coverage?.expected || 0);
   const localTaskProgress = localTaskExpected ? Math.round((localTaskCovered / localTaskExpected) * 100) : 0;
@@ -299,19 +385,45 @@ function DataCenterPage({
           <article className="warehouse-chart-card kline-card">
             <div className="panel-head">
               <b>日 K 图</b>
-              <span>{activeStock?.name || selectedSymbol || "未选择"} {selectedSymbol ? `· ${selectedSymbol}` : ""}</span>
+              <div className="chart-head-actions">
+                <span>
+                  {displayBar
+                    ? `${activeStock?.name || selectedSymbol || "未选择"} · ${displayBar.date} · 开 ${toChartNumber(displayBar.open).toFixed(2)} 高 ${toChartNumber(displayBar.high).toFixed(2)} 低 ${toChartNumber(displayBar.low).toFixed(2)} 收 ${toChartNumber(displayBar.close).toFixed(2)}`
+                    : `${activeStock?.name || selectedSymbol || "未选择"} ${selectedSymbol ? `· ${selectedSymbol}` : ""}`}
+                </span>
+                <button className="text-button" onClick={() => setChartVisibleCount(60)} disabled={!localBars.length}>近60</button>
+                <button className="text-button" onClick={() => setChartVisibleCount(120)} disabled={!localBars.length}>近120</button>
+                <button className="text-button" onClick={() => setChartVisibleCount(localBars.length || 110)} disabled={!localBars.length}>全部</button>
+              </div>
             </div>
+            <div className="chart-range-hint">{chartRangeLabel} · 鼠标悬停看价格/成交量，滚轮缩放时间跨度</div>
             <div className="warehouse-chart-body">
-              {barsState.loading ? <ChartEmptyState text="正在读取本地日线…" /> : barsState.error ? <ChartEmptyState text={barsState.error} /> : <KLineSvg bars={localBars} />}
+              {barsState.loading ? <ChartEmptyState text="正在读取本地日线…" /> : barsState.error ? <ChartEmptyState text={barsState.error} /> : (
+                <KLineSvg
+                  bars={chartBars}
+                  hoveredIndex={safeHoveredIndex}
+                  onHoverIndex={setHoveredBarIndex}
+                  onLeave={() => setHoveredBarIndex(null)}
+                  onWheel={handleChartWheel}
+                />
+              )}
             </div>
           </article>
           <article className="warehouse-chart-card volume-card">
             <div className="panel-head">
               <b>交易量</b>
-              <span>{latestBar ? `${latestBar.date} · ${compactNumber(latestBar.volume)}` : "等待数据"}</span>
+              <span>{displayBar ? `${displayBar.date} · ${compactNumber(displayBar.volume)}` : "等待数据"}</span>
             </div>
             <div className="warehouse-chart-body volume-body">
-              {barsState.loading ? <ChartEmptyState text="正在读取成交量…" /> : barsState.error ? <ChartEmptyState text={barsState.error} /> : <VolumeSvg bars={localBars} />}
+              {barsState.loading ? <ChartEmptyState text="正在读取成交量…" /> : barsState.error ? <ChartEmptyState text={barsState.error} /> : (
+                <VolumeSvg
+                  bars={chartBars}
+                  hoveredIndex={safeHoveredIndex}
+                  onHoverIndex={setHoveredBarIndex}
+                  onLeave={() => setHoveredBarIndex(null)}
+                  onWheel={handleChartWheel}
+                />
+              )}
             </div>
           </article>
         </section>
