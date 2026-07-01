@@ -159,6 +159,48 @@ def fetch_efinance_dataset(symbols: list[str], start_date: str, end_date: str) -
     return prepare_market_frame(pd.concat(frames, ignore_index=True))
 
 
+def fetch_efinance_batch_dataset(symbols: list[str], start_date: str, end_date: str) -> pd.DataFrame:
+    try:
+        import efinance as ef
+    except Exception as error:  # pragma: no cover - depends on optional runtime package
+        raise DataSourceError("未安装 efinance，请先运行 backend 依赖安装") from error
+
+    normalized_symbols = _normalize_symbols(symbols)
+    code_to_symbol = {_to_efinance_code(symbol): symbol for symbol in normalized_symbols}
+    if not code_to_symbol:
+        return pd.DataFrame()
+    compact_start = start_date.replace("-", "")
+    compact_end = end_date.replace("-", "")
+    try:
+        source = ef.stock.get_quote_history(
+            list(code_to_symbol),
+            beg=compact_start,
+            end=compact_end,
+            klt=101,
+            fqt=0,
+        )
+    except Exception as error:  # pragma: no cover - network/provider specific
+        raise DataSourceError(f"efinance 批量获取失败：{error}") from error
+
+    frames: list[pd.DataFrame] = []
+    if isinstance(source, dict):
+        for raw_code, item in source.items():
+            raw_symbol = code_to_symbol.get(str(raw_code).zfill(6))
+            if not raw_symbol:
+                continue
+            frame = _normalize_efinance_frame(item, raw_symbol)
+            if not frame.empty:
+                frames.append(frame)
+    else:
+        raw_symbol = normalized_symbols[0]
+        frame = _normalize_efinance_frame(source, raw_symbol)
+        if not frame.empty:
+            frames.append(frame)
+    if not frames:
+        raise DataSourceError(f"efinance 未返回可用行情，失败标的 {len(normalized_symbols)} 只")
+    return prepare_market_frame(pd.concat(frames, ignore_index=True))
+
+
 def fetch_baostock_dataset(symbols: list[str], start_date: str, end_date: str) -> pd.DataFrame:
     try:
         import baostock as bs
@@ -218,7 +260,7 @@ def fetch_akshare_free_dataset(symbols: list[str], start_date: str, end_date: st
 
 def _provider_fetcher(provider_name: str) -> ProviderFetcher:
     providers: dict[str, ProviderFetcher] = {
-        "efinance": fetch_efinance_dataset,
+        "efinance": fetch_efinance_batch_dataset,
         "baostock": fetch_baostock_dataset,
         "akshare": fetch_akshare_free_dataset,
     }
@@ -281,6 +323,9 @@ def _normalize_baostock_frame(source: pd.DataFrame | None, symbol: str) -> pd.Da
         return pd.DataFrame()
     normalized = normalize_symbol(symbol)
     frame = source.rename(columns={"date": "trade_date", "preclose": "prev_close"}).copy()
+    for column in ["volume", "amount"]:
+        if column in frame.columns:
+            frame[column] = frame[column].replace("", 0)
     required = ["trade_date", "open", "high", "low", "close", "volume"]
     missing = [column for column in required if column not in frame.columns]
     if missing:

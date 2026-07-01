@@ -5,6 +5,8 @@ frontend/.npm-cache/
 output/playwright/
 output/*.log
 tmp/*.log
+tmp/*.json
+tmp/*.pid
 __pycache__/
 .pytest_cache/
 *.pyc
