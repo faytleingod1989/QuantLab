@@ -550,9 +550,92 @@ function DataCenterPage({
   );
 }
 
-function StrategyResearchPage({ settings, strategyRecord, openStrategy }) {
-  const buy = settings.strategy.buy_conditions?.[0];
-  const sell = settings.strategy.sell_conditions?.[0];
+const STRATEGY_INDICATOR_OPTIONS = [
+  ["ma_cross", "均线交叉"],
+  ["ma_stack", "均线多头"],
+  ["price_vs_ma", "价格/均线"],
+  ["price_ma_deviation", "均线偏离"],
+  ["volume_vs_ma", "成交量/均量"],
+  ["volume_max_vs_ma", "天量限制"],
+  ["volume_return_spike", "放量涨跌"],
+  ["return_between", "区间收益"],
+  ["kline_up_ratio", "阳线密度"],
+  ["body_amplitude", "振幅/实体"],
+  ["life_line_watch", "生命线监控"],
+];
+
+const STRATEGY_OPERATOR_OPTIONS = [
+  ["above", "高于"],
+  ["below", "低于"],
+  ["cross_above", "上穿"],
+  ["cross_below", "下穿"],
+  ["between", "区间内"],
+];
+
+const indicatorLabel = (indicator) =>
+  STRATEGY_INDICATOR_OPTIONS.find(([value]) => value === indicator)?.[1] || indicator || "未配置";
+
+const operatorLabel = (operator) =>
+  STRATEGY_OPERATOR_OPTIONS.find(([value]) => value === operator)?.[1] || operator || "未配置";
+
+const createStrategyCondition = (side) =>
+  side === "sell"
+    ? { indicator: "price_vs_ma", operator: "below", left: 20, right: 60, threshold: 50 }
+    : { indicator: "ma_stack", operator: "above", left: 5, right: 20, threshold: 60 };
+
+const strategyGroupKey = (side) => (side === "sell" ? "sell_groups" : "buy_groups");
+const strategyConditionKey = (side) => (side === "sell" ? "sell_conditions" : "buy_conditions");
+const strategyDefaultGroupName = (side) => (side === "sell" ? "卖出组" : "买入组");
+const strategyDefaultGroupLogic = (side) => (side === "sell" ? "any" : "all");
+
+const cloneStrategyGroups = (strategy, side) => {
+  const groupKey = strategyGroupKey(side);
+  const conditionKey = strategyConditionKey(side);
+  const groups = Array.isArray(strategy?.[groupKey]) && strategy[groupKey].length
+    ? strategy[groupKey]
+    : [{ name: `${strategyDefaultGroupName(side)} 1`, logic: strategyDefaultGroupLogic(side), conditions: strategy?.[conditionKey] || [] }];
+  return groups.map((group, index) => ({
+    name: group.name || `${strategyDefaultGroupName(side)} ${index + 1}`,
+    logic: group.logic || strategyDefaultGroupLogic(side),
+    conditions: Array.isArray(group.conditions) ? group.conditions.map((condition) => ({ ...condition })) : [],
+  }));
+};
+
+const flattenStrategyGroupConditions = (groups) =>
+  groups.flatMap((group, groupIndex) =>
+    (group.conditions || []).map((condition, conditionIndex) => ({
+      condition,
+      groupIndex,
+      conditionIndex,
+      groupName: group.name,
+      groupLogic: group.logic,
+    })),
+  );
+
+const editableStrategyConfig = (settings) => ({
+  strategy: settings.strategy,
+  risk: {
+    max_position: settings.max_position,
+    max_symbol_position: settings.max_symbol_position,
+    max_hold_num: settings.strategy.max_hold_num,
+  },
+  execution: {
+    signal_price_mode: settings.signal_price_mode,
+    rebalance_days: settings.rebalance_days,
+    lot_size: settings.lot_size,
+  },
+});
+
+const normalizedNumber = (value, fallback = 0) => {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+};
+
+function StrategyResearchPage({ settings, setSettings, strategyRecord, openStrategy }) {
+  const buyGroups = useMemo(() => cloneStrategyGroups(settings.strategy, "buy"), [settings.strategy]);
+  const sellGroups = useMemo(() => cloneStrategyGroups(settings.strategy, "sell"), [settings.strategy]);
+  const buyNodes = useMemo(() => flattenStrategyGroupConditions(buyGroups), [buyGroups]);
+  const sellNodes = useMemo(() => flattenStrategyGroupConditions(sellGroups), [sellGroups]);
   const buyGroupCount = settings.strategy.buy_groups?.length || 1;
   const sellGroupCount = settings.strategy.sell_groups?.length || 1;
   const candidateSortLabel = {
@@ -562,6 +645,199 @@ function StrategyResearchPage({ settings, strategyRecord, openStrategy }) {
   }[settings.strategy.candidate_sort || "none"];
   const versionLabel = strategyRecord?.latest_version ? `v${strategyRecord.latest_version.version}` : "未保存";
   const signalPriceLabel = settings.signal_price_mode === "adjusted" ? "复权收盘" : "未复权收盘";
+  const strategyConfigJson = useMemo(() => JSON.stringify(editableStrategyConfig(settings), null, 2), [settings]);
+  const [strategyDraft, setStrategyDraft] = useState(strategyConfigJson);
+  const [strategyDraftDirty, setStrategyDraftDirty] = useState(false);
+  const [strategyDraftError, setStrategyDraftError] = useState("");
+
+  useEffect(() => {
+    if (!strategyDraftDirty) {
+      setStrategyDraft(strategyConfigJson);
+    }
+  }, [strategyConfigJson, strategyDraftDirty]);
+
+  const commitSettings = (updater) => {
+    setStrategyDraftDirty(false);
+    setStrategyDraftError("");
+    setSettings(updater);
+  };
+
+  const updateStrategy = (updater) => {
+    commitSettings((current) => {
+      const nextStrategy = updater(current.strategy || {});
+      return { ...current, strategy: nextStrategy };
+    });
+  };
+
+  const updateStrategyField = (field, value) => {
+    updateStrategy((strategy) => ({ ...strategy, [field]: value }));
+  };
+
+  const updateRuleGroupLogic = (side, value) => {
+    updateStrategy((strategy) => ({
+      ...strategy,
+      [side === "sell" ? "sell_group_logic" : "buy_group_logic"]: value,
+    }));
+  };
+
+  const updateConditionNode = (side, groupIndex, conditionIndex, patch) => {
+    updateStrategy((strategy) => {
+      const groups = cloneStrategyGroups(strategy, side);
+      if (!groups[groupIndex]?.conditions?.[conditionIndex]) return strategy;
+      groups[groupIndex].conditions[conditionIndex] = { ...groups[groupIndex].conditions[conditionIndex], ...patch };
+      return {
+        ...strategy,
+        [strategyGroupKey(side)]: groups,
+        [strategyConditionKey(side)]: groups.flatMap((group) => group.conditions),
+      };
+    });
+  };
+
+  const addConditionNode = (side) => {
+    updateStrategy((strategy) => {
+      const groups = cloneStrategyGroups(strategy, side);
+      groups[0] = {
+        ...groups[0],
+        conditions: [...(groups[0].conditions || []), createStrategyCondition(side)],
+      };
+      return {
+        ...strategy,
+        [strategyGroupKey(side)]: groups,
+        [strategyConditionKey(side)]: groups.flatMap((group) => group.conditions),
+      };
+    });
+  };
+
+  const deleteConditionNode = (side, groupIndex, conditionIndex) => {
+    updateStrategy((strategy) => {
+      const groups = cloneStrategyGroups(strategy, side).map((group, index) => (
+        index === groupIndex
+          ? { ...group, conditions: group.conditions.filter((_, conditionIndexInGroup) => conditionIndexInGroup !== conditionIndex) }
+          : group
+      ));
+      return {
+        ...strategy,
+        [strategyGroupKey(side)]: groups,
+        [strategyConditionKey(side)]: groups.flatMap((group) => group.conditions),
+      };
+    });
+  };
+
+  const addRuleGroup = (side) => {
+    updateStrategy((strategy) => {
+      const groups = cloneStrategyGroups(strategy, side);
+      groups.push({
+        name: `${strategyDefaultGroupName(side)} ${groups.length + 1}`,
+        logic: strategyDefaultGroupLogic(side),
+        conditions: [createStrategyCondition(side)],
+      });
+      return {
+        ...strategy,
+        [strategyGroupKey(side)]: groups,
+        [strategyConditionKey(side)]: groups.flatMap((group) => group.conditions),
+      };
+    });
+  };
+
+  const updateRiskPercent = (field, value) => {
+    const percent = Math.max(0, Math.min(100, normalizedNumber(value, 0))) / 100;
+    commitSettings((current) => ({ ...current, [field]: percent }));
+  };
+
+  const updateExecutionField = (field, value) => {
+    commitSettings((current) => ({ ...current, [field]: value }));
+  };
+
+  const applyStrategyDraft = () => {
+    try {
+      const parsed = JSON.parse(strategyDraft);
+      if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+        throw new Error("策略代码必须是一个 JSON 对象。");
+      }
+      const nextStrategy = parsed.strategy || parsed;
+      if (!nextStrategy || typeof nextStrategy !== "object" || Array.isArray(nextStrategy)) {
+        throw new Error("strategy 必须是一个 JSON 对象。");
+      }
+      setSettings((current) => ({
+        ...current,
+        max_position: parsed.risk?.max_position != null ? normalizedNumber(parsed.risk.max_position, current.max_position) : current.max_position,
+        max_symbol_position: parsed.risk?.max_symbol_position != null ? normalizedNumber(parsed.risk.max_symbol_position, current.max_symbol_position) : current.max_symbol_position,
+        rebalance_days: parsed.execution?.rebalance_days != null ? normalizedNumber(parsed.execution.rebalance_days, current.rebalance_days) : current.rebalance_days,
+        lot_size: parsed.execution?.lot_size != null ? normalizedNumber(parsed.execution.lot_size, current.lot_size) : current.lot_size,
+        signal_price_mode: parsed.execution?.signal_price_mode || current.signal_price_mode,
+        strategy: { ...current.strategy, ...nextStrategy },
+      }));
+      setStrategyDraftDirty(false);
+      setStrategyDraftError("");
+    } catch (error) {
+      setStrategyDraftError(errorMessage(error, "策略代码解析失败"));
+    }
+  };
+
+  const formatStrategyDraft = () => {
+    try {
+      setStrategyDraft(JSON.stringify(JSON.parse(strategyDraft), null, 2));
+      setStrategyDraftError("");
+      setStrategyDraftDirty(true);
+    } catch (error) {
+      setStrategyDraftError(errorMessage(error, "JSON 格式错误"));
+    }
+  };
+
+  const resetStrategyDraft = () => {
+    setStrategyDraft(strategyConfigJson);
+    setStrategyDraftDirty(false);
+    setStrategyDraftError("");
+  };
+
+  const renderConditionNode = (side, node, index) => {
+    const { condition, groupIndex, conditionIndex, groupName } = node;
+    return (
+      <div key={`${side}-${groupIndex}-${conditionIndex}`} className={`flow-node condition-node ${side === "sell" ? "sell" : "buy"}`}>
+        <div className="node-title-row">
+          <small>{groupName}</small>
+          <button className="danger-ghost tiny" onClick={() => deleteConditionNode(side, groupIndex, conditionIndex)}>删除</button>
+        </div>
+        <b>{side === "sell" ? "卖出" : "买入"} {index + 1}</b>
+        <label className="node-field">
+          <span>指标</span>
+          <select value={condition.indicator || ""} onChange={(event) => updateConditionNode(side, groupIndex, conditionIndex, { indicator: event.target.value })}>
+            {STRATEGY_INDICATOR_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </label>
+        <label className="node-field">
+          <span>关系</span>
+          <select value={condition.operator || "above"} onChange={(event) => updateConditionNode(side, groupIndex, conditionIndex, { operator: event.target.value })}>
+            {STRATEGY_OPERATOR_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+          </select>
+        </label>
+        <div className="node-field-grid">
+          <label className="node-field">
+            <span>短窗</span>
+            <input type="number" value={condition.left ?? ""} onChange={(event) => updateConditionNode(side, groupIndex, conditionIndex, { left: normalizedNumber(event.target.value, 0) })} />
+          </label>
+          <label className="node-field">
+            <span>长窗</span>
+            <input type="number" value={condition.right ?? ""} onChange={(event) => updateConditionNode(side, groupIndex, conditionIndex, { right: normalizedNumber(event.target.value, 0) })} />
+          </label>
+          <label className="node-field">
+            <span>阈值</span>
+            <input type="number" step="0.01" value={condition.threshold ?? ""} onChange={(event) => updateConditionNode(side, groupIndex, conditionIndex, { threshold: normalizedNumber(event.target.value, 0) })} />
+          </label>
+          <label className="node-field">
+            <span>下限</span>
+            <input type="number" step="0.01" value={condition.lower ?? ""} onChange={(event) => updateConditionNode(side, groupIndex, conditionIndex, { lower: normalizedNumber(event.target.value, 0) })} />
+          </label>
+          <label className="node-field">
+            <span>上限</span>
+            <input type="number" step="0.01" value={condition.upper ?? ""} onChange={(event) => updateConditionNode(side, groupIndex, conditionIndex, { upper: normalizedNumber(event.target.value, 0) })} />
+          </label>
+        </div>
+        <em>{indicatorLabel(condition.indicator)} · {operatorLabel(condition.operator)}</em>
+      </div>
+    );
+  };
+
   return (
     <section className="view-page strategy-management-page">
       <div className="strategy-management-hero">
@@ -580,8 +856,8 @@ function StrategyResearchPage({ settings, strategyRecord, openStrategy }) {
             <small>股票池</small>
           </span>
           <span>
-            <b>{buyGroupCount + sellGroupCount}</b>
-            <small>条件组</small>
+            <b>{buyNodes.length + sellNodes.length}</b>
+            <small>交易节点</small>
           </span>
           <span>
             <b>{signalPriceLabel}</b>
@@ -596,34 +872,34 @@ function StrategyResearchPage({ settings, strategyRecord, openStrategy }) {
       <div className="strategy-management-workbench">
         <section className="strategy-code-panel">
           <div className="panel-head">
-            <b>策略代码</b>
-            <button className="ghost" onClick={() => openStrategy("selection")}>编辑选股策略</button>
+            <b>策略代码编辑器</b>
+            <span>{strategyDraftDirty ? "有未应用修改" : "已同步工作台"}</span>
           </div>
-          <div className="strategy-code-block">
-            <span>STOCK SELECTION</span>
-            <h3>选股策略</h3>
-            <p>决定从哪些股票里筛选，以及候选股如何排序进入交易模块。</p>
-            <dl>
-              <div><dt>当前股票池</dt><dd>{settings.symbols.length} 只</dd></div>
-              <div><dt>候选排序</dt><dd>{candidateSortLabel} · {settings.strategy.sort_window || 20} 日窗口</dd></div>
-              <div><dt>最多持股</dt><dd>{settings.strategy.max_hold_num || "不限"} 只</dd></div>
-            </dl>
-            <pre>{`selection:
-  pool: ${settings.symbols.length || "全部候选"} symbols
-  sort: ${settings.strategy.candidate_sort || "none"}
-  window: ${settings.strategy.sort_window || 20}
-  max_hold: ${settings.strategy.max_hold_num || "unlimited"}`}</pre>
+          <div className="strategy-code-block strategy-code-editor-wrap">
+            <span>FULL STRATEGY JSON</span>
+            <h3>一套策略，一份配置</h3>
+            <p>左侧代码和右侧节点共用同一份策略。代码应用后刷新图形，图形改动后自动刷新代码。</p>
+            <textarea
+              className="strategy-json-editor"
+              value={strategyDraft}
+              spellCheck={false}
+              onChange={(event) => {
+                setStrategyDraft(event.target.value);
+                setStrategyDraftDirty(true);
+              }}
+            />
+            {strategyDraftError ? <div className="strategy-json-error">{strategyDraftError}</div> : null}
           </div>
           <div className="strategy-code-foot">
-            <span>版本状态</span>
-            <b>{versionLabel}</b>
-            <small>保存后会形成不可变策略版本</small>
+            <button className="primary" onClick={applyStrategyDraft}>应用代码</button>
+            <button className="ghost" onClick={formatStrategyDraft}>格式化</button>
+            <button className="ghost" onClick={resetStrategyDraft}>重置</button>
           </div>
         </section>
         <section className="strategy-visual-panel">
           <div className="panel-head">
-            <b>量化图块模块</b>
-            <span>通过参数节点增减和组合策略模块</span>
+            <b>节点工作台</b>
+            <span>添加、删除和调整节点会写回左侧代码</span>
           </div>
           <div className="strategy-flow-canvas">
             <div className="flow-column selection">
@@ -632,22 +908,43 @@ function StrategyResearchPage({ settings, strategyRecord, openStrategy }) {
                 <small>股票池</small>
                 <b>{settings.symbols.length} 只</b>
                 <em>{candidateSortLabel}</em>
+                <label className="node-field">
+                  <span>候选排序</span>
+                  <select value={settings.strategy.candidate_sort || "none"} onChange={(event) => updateStrategyField("candidate_sort", event.target.value)}>
+                    <option value="none">不排序</option>
+                    <option value="return_asc">回撤优先</option>
+                    <option value="return_desc">强势优先</option>
+                  </select>
+                </label>
+                <label className="node-field">
+                  <span>排序窗口</span>
+                  <input type="number" value={settings.strategy.sort_window || 20} onChange={(event) => updateStrategyField("sort_window", normalizedNumber(event.target.value, 20))} />
+                </label>
+                <label className="node-field">
+                  <span>最多持股</span>
+                  <input type="number" value={settings.strategy.max_hold_num || ""} onChange={(event) => updateStrategyField("max_hold_num", normalizedNumber(event.target.value, 0))} />
+                </label>
+                <button className="ghost" onClick={() => openStrategy("selection")}>高级选股</button>
               </div>
             </div>
             <div className="flow-arrow">→</div>
             <div className="flow-column trading">
               <span>交易环节</span>
               <div className="flow-row">
-                <div className="flow-node buy">
-                  <small>买入条件</small>
-                  <b>{buy ? buy.indicator : "未配置"}</b>
-                  <em>{buy ? `${buy.operator} · ${buy.left}/${buy.right}` : `${buyGroupCount} 组`}</em>
+                <div className="flow-node-list">
+                  <div className="node-toolbar">
+                    <b>买入条件</b>
+                    <button className="ghost tiny" onClick={() => addConditionNode("buy")}>+ 节点</button>
+                  </div>
+                  {buyNodes.length ? buyNodes.map((node, index) => renderConditionNode("buy", node, index)) : <div className="empty-node">暂无买入节点</div>}
                 </div>
                 <div className="flow-arrow small">→</div>
-                <div className="flow-node sell">
-                  <small>卖出条件</small>
-                  <b>{sell ? sell.indicator : "未配置"}</b>
-                  <em>{sell ? `${sell.operator} · ${sell.left}/${sell.right}` : `${sellGroupCount} 组`}</em>
+                <div className="flow-node-list">
+                  <div className="node-toolbar">
+                    <b>卖出条件</b>
+                    <button className="ghost tiny" onClick={() => addConditionNode("sell")}>+ 节点</button>
+                  </div>
+                  {sellNodes.length ? sellNodes.map((node, index) => renderConditionNode("sell", node, index)) : <div className="empty-node">暂无卖出节点</div>}
                 </div>
               </div>
               <div className="flow-row bottom">
@@ -655,11 +952,30 @@ function StrategyResearchPage({ settings, strategyRecord, openStrategy }) {
                   <small>仓位风控</small>
                   <b>总仓 {Math.round(settings.max_position * 100)}%</b>
                   <em>单票 {Math.round((settings.max_symbol_position || 0.35) * 100)}%</em>
+                  <label className="node-field">
+                    <span>总仓位 %</span>
+                    <input type="number" value={Math.round(settings.max_position * 100)} onChange={(event) => updateRiskPercent("max_position", event.target.value)} />
+                  </label>
+                  <label className="node-field">
+                    <span>单票上限 %</span>
+                    <input type="number" value={Math.round((settings.max_symbol_position || 0.35) * 100)} onChange={(event) => updateRiskPercent("max_symbol_position", event.target.value)} />
+                  </label>
                 </div>
                 <div className="flow-node price">
                   <small>信号价格</small>
                   <b>{signalPriceLabel}</b>
                   <em>撮合用未复权价格</em>
+                  <label className="node-field">
+                    <span>信号基准</span>
+                    <select value={settings.signal_price_mode || "unadjusted"} onChange={(event) => updateExecutionField("signal_price_mode", event.target.value)}>
+                      <option value="unadjusted">未复权收盘</option>
+                      <option value="adjusted">复权收盘</option>
+                    </select>
+                  </label>
+                  <label className="node-field">
+                    <span>再平衡天数</span>
+                    <input type="number" value={settings.rebalance_days || 1} onChange={(event) => updateExecutionField("rebalance_days", normalizedNumber(event.target.value, 1))} />
+                  </label>
                 </div>
               </div>
               <button className="primary" onClick={() => openStrategy("trading")}>编辑交易策略</button>
@@ -670,11 +986,27 @@ function StrategyResearchPage({ settings, strategyRecord, openStrategy }) {
                 <small>买入组</small>
                 <b>{buyGroupCount} 组</b>
                 <em>{(settings.strategy.buy_group_logic || "any") === "all" ? "全部组满足" : "任一组满足"}</em>
+                <label className="node-field">
+                  <span>组间规则</span>
+                  <select value={settings.strategy.buy_group_logic || "any"} onChange={(event) => updateRuleGroupLogic("buy", event.target.value)}>
+                    <option value="any">任一组满足</option>
+                    <option value="all">全部组满足</option>
+                  </select>
+                </label>
+                <button className="ghost tiny" onClick={() => addRuleGroup("buy")}>+ 买入组</button>
               </div>
               <div className="flow-node compact">
                 <small>卖出组</small>
                 <b>{sellGroupCount} 组</b>
                 <em>{(settings.strategy.sell_group_logic || "any") === "all" ? "全部组满足" : "任一组满足"}</em>
+                <label className="node-field">
+                  <span>组间规则</span>
+                  <select value={settings.strategy.sell_group_logic || "any"} onChange={(event) => updateRuleGroupLogic("sell", event.target.value)}>
+                    <option value="any">任一组满足</option>
+                    <option value="all">全部组满足</option>
+                  </select>
+                </label>
+                <button className="ghost tiny" onClick={() => addRuleGroup("sell")}>+ 卖出组</button>
               </div>
             </div>
           </div>
@@ -1493,7 +1825,7 @@ function App() {
       );
     }
     if (activeView === "strategy") {
-      return <StrategyResearchPage settings={settings} strategyRecord={strategyRecord} openStrategy={openStrategyEditor} />;
+      return <StrategyResearchPage settings={settings} setSettings={setSettings} strategyRecord={strategyRecord} openStrategy={openStrategyEditor} />;
     }
     if (activeView === "results") {
       return <ResultsAnalysisPage result={result} settings={settings} running={running} metrics={metrics} chartData={chartData} years={years} comparisons={comparisons} onRun={runBacktest} />;
