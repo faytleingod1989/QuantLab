@@ -560,62 +560,125 @@ function StrategyResearchPage({ settings, strategyRecord, openStrategy }) {
     return_asc: "回撤优先",
     return_desc: "强势优先",
   }[settings.strategy.candidate_sort || "none"];
+  const versionLabel = strategyRecord?.latest_version ? `v${strategyRecord.latest_version.version}` : "未保存";
+  const signalPriceLabel = settings.signal_price_mode === "adjusted" ? "复权收盘" : "未复权收盘";
   return (
-    <section className="view-page">
-      <div className="view-hero">
-        <div>
-          <span>STRATEGY LAB</span>
-          <h2>{settings.strategy.name}</h2>
-          <p>策略研究按「选股策略」和「交易策略」组织：先确定候选股票，再定义买入、卖出、仓位和风控。</p>
+    <section className="view-page strategy-management-page">
+      <div className="strategy-management-hero">
+        <div className="strategy-management-title">
+          <span>STRATEGY MANAGEMENT</span>
+          <h2>策略管理</h2>
+          <p>{settings.strategy.name}</p>
+        </div>
+        <div className="strategy-management-summary">
+          <span>
+            <b>{versionLabel}</b>
+            <small>策略版本</small>
+          </span>
+          <span>
+            <b>{settings.symbols.length}</b>
+            <small>股票池</small>
+          </span>
+          <span>
+            <b>{buyGroupCount + sellGroupCount}</b>
+            <small>条件组</small>
+          </span>
+          <span>
+            <b>{signalPriceLabel}</b>
+            <small>信号价格</small>
+          </span>
         </div>
         <div className="view-actions">
           <button className="ghost" onClick={() => openStrategy("selection")}>编辑选股</button>
           <button className="primary" onClick={() => openStrategy("trading")}>编辑交易</button>
         </div>
       </div>
-      <div className="strategy-module-grid">
-        <div className="strategy-module-card">
-          <span>STOCK SELECTION</span>
-          <h3>选股策略</h3>
-          <p>决定从哪些股票里筛选，以及候选股如何排序进入交易模块。</p>
-          <div>
-            <small>当前股票池</small>
-            <b>{settings.symbols.length} 只</b>
+      <div className="strategy-management-workbench">
+        <section className="strategy-code-panel">
+          <div className="panel-head">
+            <b>策略代码</b>
+            <button className="ghost" onClick={() => openStrategy("selection")}>编辑选股策略</button>
           </div>
-          <div>
-            <small>候选排序</small>
-            <b>{candidateSortLabel} · {settings.strategy.sort_window || 20} 日窗口</b>
+          <div className="strategy-code-block">
+            <span>STOCK SELECTION</span>
+            <h3>选股策略</h3>
+            <p>决定从哪些股票里筛选，以及候选股如何排序进入交易模块。</p>
+            <dl>
+              <div><dt>当前股票池</dt><dd>{settings.symbols.length} 只</dd></div>
+              <div><dt>候选排序</dt><dd>{candidateSortLabel} · {settings.strategy.sort_window || 20} 日窗口</dd></div>
+              <div><dt>最多持股</dt><dd>{settings.strategy.max_hold_num || "不限"} 只</dd></div>
+            </dl>
+            <pre>{`selection:
+  pool: ${settings.symbols.length || "全部候选"} symbols
+  sort: ${settings.strategy.candidate_sort || "none"}
+  window: ${settings.strategy.sort_window || 20}
+  max_hold: ${settings.strategy.max_hold_num || "unlimited"}`}</pre>
           </div>
-          <div>
-            <small>最多持股</small>
-            <b>{settings.strategy.max_hold_num || "不限"} 只</b>
+          <div className="strategy-code-foot">
+            <span>版本状态</span>
+            <b>{versionLabel}</b>
+            <small>保存后会形成不可变策略版本</small>
           </div>
-          <button className="ghost" onClick={() => openStrategy("selection")}>编辑选股策略</button>
-        </div>
-        <div className="strategy-module-card">
-          <span>TRADING RULES</span>
-          <h3>交易策略</h3>
-          <p>决定何时买入、何时卖出，以及仓位、止损止盈和 T+1 执行约束。</p>
-          <div>
-            <small>买入条件组</small>
-            <b>{buyGroupCount} 组 · {(settings.strategy.buy_group_logic || "any") === "all" ? "全部组满足" : "任一组满足"}</b>
+        </section>
+        <section className="strategy-visual-panel">
+          <div className="panel-head">
+            <b>量化图块模块</b>
+            <span>通过参数节点增减和组合策略模块</span>
           </div>
-          <div>
-            <small>卖出条件组</small>
-            <b>{sellGroupCount} 组 · {(settings.strategy.sell_group_logic || "any") === "all" ? "全部组满足" : "任一组满足"}</b>
+          <div className="strategy-flow-canvas">
+            <div className="flow-column selection">
+              <span>选股环节</span>
+              <div className="flow-node tall">
+                <small>股票池</small>
+                <b>{settings.symbols.length} 只</b>
+                <em>{candidateSortLabel}</em>
+              </div>
+            </div>
+            <div className="flow-arrow">→</div>
+            <div className="flow-column trading">
+              <span>交易环节</span>
+              <div className="flow-row">
+                <div className="flow-node buy">
+                  <small>买入条件</small>
+                  <b>{buy ? buy.indicator : "未配置"}</b>
+                  <em>{buy ? `${buy.operator} · ${buy.left}/${buy.right}` : `${buyGroupCount} 组`}</em>
+                </div>
+                <div className="flow-arrow small">→</div>
+                <div className="flow-node sell">
+                  <small>卖出条件</small>
+                  <b>{sell ? sell.indicator : "未配置"}</b>
+                  <em>{sell ? `${sell.operator} · ${sell.left}/${sell.right}` : `${sellGroupCount} 组`}</em>
+                </div>
+              </div>
+              <div className="flow-row bottom">
+                <div className="flow-node risk">
+                  <small>仓位风控</small>
+                  <b>总仓 {Math.round(settings.max_position * 100)}%</b>
+                  <em>单票 {Math.round((settings.max_symbol_position || 0.35) * 100)}%</em>
+                </div>
+                <div className="flow-node price">
+                  <small>信号价格</small>
+                  <b>{signalPriceLabel}</b>
+                  <em>撮合用未复权价格</em>
+                </div>
+              </div>
+              <button className="primary" onClick={() => openStrategy("trading")}>编辑交易策略</button>
+            </div>
+            <div className="flow-column rules">
+              <span>组合规则</span>
+              <div className="flow-node compact">
+                <small>买入组</small>
+                <b>{buyGroupCount} 组</b>
+                <em>{(settings.strategy.buy_group_logic || "any") === "all" ? "全部组满足" : "任一组满足"}</em>
+              </div>
+              <div className="flow-node compact">
+                <small>卖出组</small>
+                <b>{sellGroupCount} 组</b>
+                <em>{(settings.strategy.sell_group_logic || "any") === "all" ? "全部组满足" : "任一组满足"}</em>
+              </div>
+            </div>
           </div>
-          <div>
-            <small>仓位风控</small>
-            <b>总仓 {Math.round(settings.max_position * 100)}% · 单票 {Math.round((settings.max_symbol_position || 0.35) * 100)}%</b>
-          </div>
-          <button className="primary" onClick={() => openStrategy("trading")}>编辑交易策略</button>
-        </div>
-      </div>
-      <div className="page-card-grid">
-        <PageCard title="版本状态" value={strategyRecord?.latest_version ? `v${strategyRecord.latest_version.version}` : "未保存"} note="保存后会形成不可变策略版本" />
-        <PageCard title="买入条件" value={buy ? buy.indicator : "未配置"} note={buy ? `${buy.operator} · ${buy.left}/${buy.right}` : ""} />
-        <PageCard title="卖出条件" value={sell ? sell.indicator : "未配置"} note={sell ? `${sell.operator} · ${sell.left}/${sell.right}` : ""} />
-        <PageCard title="信号价格" value={settings.signal_price_mode === "adjusted" ? "复权收盘" : "未复权收盘"} note="撮合仍使用未复权价格" />
+        </section>
       </div>
     </section>
   );
