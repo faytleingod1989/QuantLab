@@ -144,7 +144,6 @@ function KLineSvg({ bars, hoveredIndex, onHoverIndex, onLeave, onWheel }) {
   const candleWidth = Math.max(1.8, Math.min(10, step * renderStride * 0.52));
   const y = (price) => padding.top + ((maxPrice - price) / range) * plotHeight;
   const lastBar = visibleBars[visibleBars.length - 1];
-  const lastClose = toChartNumber(lastBar?.close);
   const hoveredBar = hoveredIndex == null ? null : visibleBars[hoveredIndex];
   const hoveredPreviousBar = hoveredIndex == null ? null : visibleBars[hoveredIndex - 1];
   const hoveredChange = priceChangeMeta(hoveredBar, hoveredPreviousBar);
@@ -185,7 +184,6 @@ function KLineSvg({ bars, hoveredIndex, onHoverIndex, onLeave, onWheel }) {
       {hoveredBar ? (
         <g className="chart-hover-layer">
           <line className="chart-crosshair" x1={hoveredX} x2={hoveredX} y1={padding.top} y2={height - padding.bottom} />
-          <line className="chart-crosshair muted" x1={padding.left} x2={width - padding.right} y1={y(hoveredClose)} y2={y(hoveredClose)} />
           <circle cx={hoveredX} cy={y(hoveredClose)} r="4" />
           <g className="chart-tooltip-box" transform={`translate(${tooltipX} ${padding.top + 8})`}>
             <rect width="176" height="76" rx="5" />
@@ -197,7 +195,6 @@ function KLineSvg({ bars, hoveredIndex, onHoverIndex, onLeave, onWheel }) {
         </g>
       ) : null}
       <text className="chart-axis-label" x={width - padding.right + 8} y={y(maxPrice) + 4}>{maxPrice.toFixed(2)}</text>
-      <text className="chart-axis-label" x={width - padding.right + 8} y={y(lastClose) + 4}>{lastClose.toFixed(2)}</text>
       <text className="chart-axis-label" x={width - padding.right + 8} y={y(minPrice) + 4}>{minPrice.toFixed(2)}</text>
       <text className="chart-date-label" x={padding.left} y={height - 8}>{visibleBars[0]?.date}</text>
       <text className="chart-date-label" x={width - padding.right} y={height - 8} textAnchor="end">{lastBar?.date}</text>
