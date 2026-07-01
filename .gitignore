@@ -4,6 +4,7 @@ frontend/.npm-cache/
 .playwright-cli/
 output/playwright/
 output/*.log
+tmp/*.log
 __pycache__/
 .pytest_cache/
 *.pyc
