@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import hashlib
+import asyncio
 from contextlib import asynccontextmanager
 from datetime import date, timedelta
 from pathlib import Path
@@ -108,10 +109,22 @@ dataset_sync_manager = DatasetSyncTaskManager(
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    await run_in_threadpool(_backfill_market_warehouse_from_datasets)
-    yield
-    task_manager.shutdown()
-    dataset_sync_manager.shutdown()
+    startup_task = asyncio.create_task(_run_startup_maintenance())
+    try:
+        yield
+    finally:
+        if not startup_task.done():
+            startup_task.cancel()
+        task_manager.shutdown()
+        dataset_sync_manager.shutdown()
+
+
+async def _run_startup_maintenance() -> None:
+    try:
+        result = await run_in_threadpool(_backfill_market_warehouse_from_datasets)
+        logger.info("startup_maintenance_complete result=%s", result)
+    except Exception:
+        logger.exception("startup_maintenance_failed")
 
 
 app = FastAPI(title="QuantLab A 股回测 API", version="0.4.0", lifespan=lifespan)

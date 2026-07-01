@@ -7,6 +7,13 @@ set "ROOT=%~dp0"
 if "%ROOT:~-1%"=="\" set "ROOT=%ROOT:~0,-1%"
 set "BACKEND_DIR=%ROOT%\backend"
 set "FRONTEND_DIR=%ROOT%\frontend"
+set "LOG_DIR=%ROOT%\tmp"
+set "BACKEND_LOG=%LOG_DIR%\backend.log"
+set "FRONTEND_LOG=%LOG_DIR%\frontend.log"
+set "BACKEND_WAIT_SECONDS=90"
+set "FRONTEND_WAIT_SECONDS=45"
+
+if not exist "%LOG_DIR%" mkdir "%LOG_DIR%" >nul 2>nul
 
 echo.
 echo ================================================
@@ -97,14 +104,16 @@ echo.
 echo [3/4] Starting backend API: http://127.0.0.1:8000
 %PYTHON% -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=1)" >nul 2>nul
 if errorlevel 1 (
-    start "QuantLab-Backend" /MIN /D "%ROOT%" cmd /k "%PYTHON% -m uvicorn backend.app:app --host 127.0.0.1 --port 8000"
+    echo [INFO] Backend log: %BACKEND_LOG%
+    echo ==== %DATE% %TIME% Starting backend ====>>"%BACKEND_LOG%"
+    start "QuantLab-Backend" /MIN /D "%ROOT%" cmd /k call "%ROOT%\scripts\start-backend.bat" "%PYTHON%" "%BACKEND_LOG%" "%ROOT%"
 ) else (
     echo [OK] Backend is already running.
 )
 
 echo [WAIT] Backend health check...
 set "BACKEND_READY=0"
-for /L %%i in (1,1,30) do (
+for /L %%i in (1,1,%BACKEND_WAIT_SECONDS%) do (
     %PYTHON% -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/health', timeout=1)" >nul 2>nul
     if not errorlevel 1 (
         set "BACKEND_READY=1"
@@ -112,7 +121,9 @@ for /L %%i in (1,1,30) do (
     )
     timeout /t 1 /nobreak >nul
 )
-echo [WARN] Backend did not become ready in time. Check the QuantLab-Backend window.
+echo [WARN] Backend did not become ready in %BACKEND_WAIT_SECONDS% seconds.
+echo [WARN] Last backend log lines:
+powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Test-Path $env:BACKEND_LOG) { Get-Content -LiteralPath $env:BACKEND_LOG -Tail 60 } else { Write-Host 'Backend log file was not created.' }"
 
 :backend_ready
 if "%BACKEND_READY%"=="1" echo [OK] Backend is ready.
@@ -121,14 +132,16 @@ echo.
 echo [4/4] Starting frontend app: http://127.0.0.1:5173
 %PYTHON% -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5173', timeout=1)" >nul 2>nul
 if errorlevel 1 (
-    start "QuantLab-Frontend" /MIN /D "%FRONTEND_DIR%" cmd /k "call %NPM% run dev"
+    echo [INFO] Frontend log: %FRONTEND_LOG%
+    echo ==== %DATE% %TIME% Starting frontend ====>>"%FRONTEND_LOG%"
+    start "QuantLab-Frontend" /MIN /D "%FRONTEND_DIR%" cmd /k call "%ROOT%\scripts\start-frontend.bat" "%NPM%" "%FRONTEND_LOG%" "%FRONTEND_DIR%"
 ) else (
     echo [OK] Frontend is already running.
 )
 
 echo [WAIT] Frontend health check...
 set "FRONTEND_READY=0"
-for /L %%i in (1,1,30) do (
+for /L %%i in (1,1,%FRONTEND_WAIT_SECONDS%) do (
     %PYTHON% -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5173', timeout=1)" >nul 2>nul
     if not errorlevel 1 (
         set "FRONTEND_READY=1"
@@ -136,7 +149,9 @@ for /L %%i in (1,1,30) do (
     )
     timeout /t 1 /nobreak >nul
 )
-echo [WARN] Frontend did not become ready in time. Check the QuantLab-Frontend window.
+echo [WARN] Frontend did not become ready in %FRONTEND_WAIT_SECONDS% seconds.
+echo [WARN] Last frontend log lines:
+powershell -NoProfile -ExecutionPolicy Bypass -Command "if (Test-Path $env:FRONTEND_LOG) { Get-Content -LiteralPath $env:FRONTEND_LOG -Tail 60 } else { Write-Host 'Frontend log file was not created.' }"
 
 :frontend_ready
 if "%FRONTEND_READY%"=="1" echo [OK] Frontend is ready.
